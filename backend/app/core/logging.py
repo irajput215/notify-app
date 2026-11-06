@@ -447,7 +447,7 @@ class EnvelopeFilter(logging.Filter):
 
 #: Set on a record the envelope validator has already dropped, so N handlers count one line once.
 #: The leading underscore keeps it out of the JSON line (see `JSONFormatter.format`).
-_DROP_MARKER: Final = "_clinos_envelope_dropped"
+_DROP_MARKER: Final = "_notify_envelope_dropped"
 
 
 _envelope_drops = 0
