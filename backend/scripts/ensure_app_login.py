@@ -32,9 +32,8 @@ def main() -> int:
     user = os.environ.get("APP_DB_USER", "notify_api")
     password = os.environ.get("APP_DB_PASSWORD")
     if not url or not password:
-        print(
-            "MIGRATION_DATABASE_URL and APP_DB_PASSWORD are required", file=sys.stderr
-        )  # noqa: T201
+        sys.stderr.write("MIGRATION_DATABASE_URL and APP_DB_PASSWORD are required
+")
         return 2
     role = sql.Identifier(user)
     secret = sql.Literal(password)
@@ -67,9 +66,9 @@ def main() -> int:
             "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = %s", (user,)
         ).fetchone() or (True, True)
     if superuser or bypass:
-        print(f"{user} is a superuser or bypasses RLS; refusing", file=sys.stderr)  # noqa: T201
+        sys.stderr.write(f"{user} is a superuser or bypasses RLS; refusing\n")
         return 1
-    print(f"{user}: login ready, member of {APP_GROUP_ROLE}")  # noqa: T201
+    sys.stdout.write(f"{user}: login ready, member of {APP_GROUP_ROLE}\n")
     return 0
 
 
