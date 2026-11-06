@@ -40,6 +40,12 @@ The backend began as a copy of ClinicOS's platform layer with the cannabis-clini
 The frontend is the Notify Next.js app. It still runs on demo data; its services move onto the typed
 API client (`frontend/lib/api/`) module by module.
 
+## Deploy
+
+Google Cloud in Sydney: Cloud Run for the API and the web app, Cloud SQL for PostgreSQL, Secret
+Manager, Cloud Scheduler, Terraform, and keyless GitHub Actions deploys. See
+[infra/README.md](infra/README.md).
+
 ## Next
 
 `channels/whatsapp`, `conversations`, `templates`, `webhooks`, `workflows`, `ai`, `connectors/booking`

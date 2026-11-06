@@ -76,12 +76,12 @@ CREATE ROLE notify_api LOGIN PASSWORD '...' NOBYPASSRLS IN ROLE notify_app;
 ALTER ROLE notify_api SET role = 'notify_app';
 ```
 
-Then set `DATABASE_URL` to `notify_api` and `MIGRATION_DATABASE_URL` to the owner.
+Then set `DATABASE_URL` to `notify_api` and `MIGRATION_DATABASE_URL` to the owner. On Google Cloud the
+migration job does this for you (`backend/scripts/ensure_app_login.py`).
 
-## Production notes
+## Production
 
-- Neon project and app hosting both in Sydney (`ap-southeast-2`); turn scale-to-zero off.
-- Set `FIELD_ENCRYPTION_KEY` before any real phone number is stored, and never change it without
-  re-encrypting.
-- `FRONTEND_HOST` is the only CORS origin and the base of every emailed link.
-- Rate limits are in process memory: one API instance until they move to Redis.
+Notify deploys to Google Cloud (Cloud Run, Cloud SQL, Secret Manager), all in Sydney. The whole
+setup, including the first deploy, is in [infra/README.md](infra/README.md). In short: `terraform
+apply` in `infra/terraform`, set three GitHub variables, and every push to `main` that passes CI is
+built, migrated and rolled out by `.github/workflows/deploy.yml`.

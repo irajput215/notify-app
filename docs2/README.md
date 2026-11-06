@@ -4,7 +4,7 @@ Notify is two apps in one repository:
 
 | Folder | What | Stack |
 | --- | --- | --- |
-| [`backend/`](../backend/) | The API: workspaces, auth, roles, contacts, bookings, audit | FastAPI, SQLModel, PostgreSQL (Neon, Sydney), Alembic |
+| [`backend/`](../backend/) | The API: workspaces, auth, roles, contacts, bookings, audit | FastAPI, SQLModel, PostgreSQL (Cloud SQL, Sydney), Alembic; deployed on Cloud Run ([infra/](../infra/README.md)) |
 | [`frontend/`](../frontend/) | The web app: inbox, contacts, templates, automations, settings, marketing site | Next.js (App Router), React, Tailwind, shadcn/ui |
 
 The backend began as a copy of ClinicOS's platform layer (tenancy with row-level security, roles,

@@ -42,4 +42,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 WORKDIR /app/backend/
 
-CMD ["fastapi", "run", "--workers", "4"]
+# Cloud Run sets PORT (8080); `fastapi run` reads it. Uvicorn's proxy-header handling is off: the
+# client address is resolved by `app.core.proxy` from TRUSTED_PROXY_HOPS instead, which a client
+# cannot spoof by sending its own X-Forwarded-For.
+CMD ["fastapi", "run", "--workers", "2", "--no-proxy-headers"]

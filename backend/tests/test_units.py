@@ -71,3 +71,29 @@ def test_role_bundles() -> None:
         "contacts:read",
         "contacts:manage",
     }
+
+
+def test_trusted_proxy_takes_the_trusted_end_of_x_forwarded_for() -> None:
+    import asyncio
+    from typing import Any
+
+    from app.core.proxy import TrustedProxyMiddleware
+
+    seen: list[Any] = []
+
+    async def inner(scope: Any, _receive: Any, _send: Any) -> None:
+        seen.append(scope["client"])
+
+    def run(hops: int, header: str | None) -> Any:
+        headers = [] if header is None else [(b"x-forwarded-for", header.encode())]
+        scope = {"type": "http", "client": ("10.0.0.1", 5000), "headers": headers}
+        asyncio.run(TrustedProxyMiddleware(inner, hops=hops)(scope, None, None))  # type: ignore[arg-type]
+        return seen.pop()
+
+    # A client-supplied entry on the left is ignored; the proxy-appended one on the right wins.
+    assert run(1, "6.6.6.6, 203.0.113.9") == ("203.0.113.9", 5000)
+    assert run(2, "6.6.6.6, 203.0.113.9, 35.191.0.1") == ("203.0.113.9", 5000)
+    # Off, absent, or fewer entries than trusted hops: the socket peer stands.
+    assert run(0, "6.6.6.6") == ("10.0.0.1", 5000)
+    assert run(1, None) == ("10.0.0.1", 5000)
+    assert run(2, "203.0.113.9") == ("10.0.0.1", 5000)

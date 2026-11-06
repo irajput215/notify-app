@@ -1,0 +1,89 @@
+# Deploy to Google Cloud after CI passes on main: build both images, migrate, roll out.
+#
+# Keyless: GitHub's OIDC token is exchanged for the notify-deployer service account through Workload
+# Identity Federation (infra/terraform/iam.tf), which only trusts this repository's main branch.
+#
+# Repository variables (Settings -> Secrets and variables -> Actions -> Variables), from
+# `terraform output`:
+#   GCP_PROJECT_ID, GCP_WIF_PROVIDER, GCP_DEPLOYER_SA   (GCP_REGION defaults to australia-southeast1)
+# Until GCP_PROJECT_ID is set the workflow skips itself.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  REGION: ${{ vars.GCP_REGION || 'australia-southeast1' }}
+
+jobs:
+  deploy:
+    if: >-
+      vars.GCP_PROJECT_ID != '' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The commit CI tested, not whatever main points at now.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Image names
+        id: images
+        run: |
+          registry="${REGION}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/notify"
+          tag="$(git rev-parse --short=12 HEAD)"
+          echo "backend=${registry}/backend:${tag}" >> "$GITHUB_OUTPUT"
+          echo "frontend=${registry}/frontend:${tag}" >> "$GITHUB_OUTPUT"
+          backend_url="$(gcloud run services describe notify-backend --region "$REGION" --format='value(uri)')"
+          echo "backend_url=${backend_url}" >> "$GITHUB_OUTPUT"
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push the API
+        run: |
+          docker build -f backend/Dockerfile -t "${{ steps.images.outputs.backend }}" .
+          docker push "${{ steps.images.outputs.backend }}"
+
+      - name: Build and push the web app
+        run: |
+          docker build -f frontend/Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL="${{ steps.images.outputs.backend_url }}" \
+            -t "${{ steps.images.outputs.frontend }}" frontend
+          docker push "${{ steps.images.outputs.frontend }}"
+
+      - name: Migrate (schema, API login role, seed)
+        run: |
+          gcloud run jobs update notify-migrate --region "$REGION" --image "${{ steps.images.outputs.backend }}"
+          gcloud run jobs execute notify-migrate --region "$REGION" --wait
+
+      - name: Roll out the API
+        run: gcloud run services update notify-backend --region "$REGION" --image "${{ steps.images.outputs.backend }}"
+
+      - name: Roll out the web app
+        run: gcloud run services update notify-frontend --region "$REGION" --image "${{ steps.images.outputs.frontend }}"
+
+      - name: Smoke test
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 \
+            "${{ steps.images.outputs.backend_url }}/api/v1/utils/health-check/"

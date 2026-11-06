@@ -1,0 +1,8 @@
+project_id            = "your-gcp-project"
+first_superuser_email = "you@example.com"
+emails_from           = "hello@yourdomain.com"
+
+# An SMTP relay (SendGrid, Postmark, Mailgun...). Without one, signup and invitations are refused.
+smtp_host     = "smtp.sendgrid.net"
+smtp_user     = "apikey"
+smtp_password = "REPLACE_ME"

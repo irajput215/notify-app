@@ -1,9 +1,9 @@
 # Architecture
 
 ```
-Browser ──> Next.js (frontend/, Vercel or any Node host) ──fetch──> FastAPI (backend/, /api/v1) ──> PostgreSQL (Neon, ap-southeast-2)
+Browser ──> Next.js (frontend/, Cloud Run) ──fetch──> FastAPI (backend/, Cloud Run, /api/v1) ──> Cloud SQL PostgreSQL 16 (australia-southeast1)
                                                                         │
-                                                                        ├──> Redis + arq (queues, schedules)      [next]
+                                                                        ├──> Memorystore Redis + arq (queues, schedules)  [next]
                                                                         ├──> WhatsApp Cloud API (Meta webhooks)   [next]
                                                                         └──> Cliniko, LLM provider                [next]
 ```

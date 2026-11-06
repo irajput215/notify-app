@@ -16,6 +16,7 @@ from app.core.correlation import CorrelationIdMiddleware
 from app.core.db import warm_pool
 from app.core.errors import install_exception_handlers
 from app.core.logging import configure_logging
+from app.core.proxy import TrustedProxyMiddleware
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.core.server_timing import ServerTimingMiddleware
 from app.core.static_cache import StaticCacheMiddleware
@@ -88,6 +89,10 @@ app.add_middleware(CorrelationIdMiddleware)
 # Outermost of all: it opens the request's database measurement before anything else runs, so the
 # request line written by the correlation middleware can carry it (`app/core/server_timing.py`).
 app.add_middleware(ServerTimingMiddleware)
+
+# Outside even that: the client address every later layer sees (rate limits, the audit trail's
+# `source_ip`) is resolved once, from the trusted end of `X-Forwarded-For` (`app/core/proxy.py`).
+app.add_middleware(TrustedProxyMiddleware, hops=settings.TRUSTED_PROXY_HOPS)
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 

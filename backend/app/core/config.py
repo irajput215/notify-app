@@ -103,6 +103,10 @@ class Settings(BaseSettings):
     # (login, password recovery). Tests clear the window between cases.
     RATE_LIMIT_ENABLED: bool = True
 
+    # How many trusted proxies sit in front of the app and append to `X-Forwarded-For`
+    # (`app.core.proxy`). 0 locally (the socket peer is the client); 1 on Cloud Run.
+    TRUSTED_PROXY_HOPS: int = Field(default=0, ge=0, le=5)
+
     # `Server-Timing` on the responses that opt in (`app.core.server_timing`): durations and counts
     # only, so speed can be judged at the origin rather than from wherever the observer sits
     # (`docs/reference/performance.md`). On by default, which is what production runs.
