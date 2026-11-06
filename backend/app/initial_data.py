@@ -14,11 +14,10 @@ logger = logging.getLogger(__name__)
 def init() -> None:
     with Session(engine) as session:
         init_db(session)
-        # Opt-in: the demo organisation is MVP seed data, not deployment behaviour.
+        # Opt-in: the demo workspace is seed data, not deployment behaviour.
         if settings.SEED_DEMO_TENANT:
             tenant = seed_demo_tenant(session)
-            # The RBAC seed migration only reaches tenants that existed when it ran; the demo
-            # organisation is created afterwards, so it needs its seven roles provisioned here.
+            # A workspace's Owner, Admin and Agent roles are provisioned per workspace; idempotent.
             provision_tenant_roles(tenant_id=tenant.id)
 
 

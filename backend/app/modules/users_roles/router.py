@@ -184,7 +184,7 @@ so the literal `me` segment is never captured by `/users/{user_id}/permissions` 
 #### `POST /api/v1/users/signup`
 - Authentication: No - open registration (`USERS_OPEN_REGISTRATION`); refused `403` when it is off
 - Permission: none; Tenant scope: none - no organisation exists until the link is used
-- Input schema: `OrganisationSignup` - `{email, password, full_name?, clinic_name?}`; any other key `422`
+- Input schema: `OrganisationSignup` - `{email, password, full_name?, workspace_name?}`; any other key `422`
 - Output schema: `SignupAccepted` - `{request_id, expires_in_hours}`, `202`, **the same for every
   address**: a new one is emailed a verification link, one that has an account a notice (D-008)
 - Audit: none - no tenant exists, and the audit log is tenant-scoped; the request row is the record
@@ -625,7 +625,7 @@ def register_user(*, body: OrganisationSignup) -> SignupAccepted:
         email=str(body.email),
         password=body.password,
         full_name=body.full_name,
-        clinic_name=body.clinic_name,
+        workspace_name=body.workspace_name,
     )
     return SignupAccepted(
         request_id=requested.request_id,

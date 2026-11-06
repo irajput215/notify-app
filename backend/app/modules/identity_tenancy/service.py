@@ -50,9 +50,9 @@ from app.modules.identity_tenancy.schemas import (
 # retention by state and territory), so both paths use a placeholder.
 DEFAULT_RETENTION_PROFILE = "default"
 
-DEMO_TENANT_SLUG = "demo-clinic"
-DEMO_TENANT_LEGAL_NAME = "Demo Clinic Pty Ltd"
-DEMO_TENANT_DISPLAY_NAME = "Demo Clinic"
+DEMO_TENANT_SLUG = "demo-workspace"
+DEMO_TENANT_LEGAL_NAME = "Demo Workspace Pty Ltd"
+DEMO_TENANT_DISPLAY_NAME = "Demo Workspace"
 
 # The unique index behind "two clinics may share a name": `Field(unique=True, index=True)` renders as
 # a unique index under the naming convention (`app.core.metadata`), and PostgreSQL reports the index
@@ -204,10 +204,10 @@ def display_name_from_slug(slug: str) -> str:
     `display_name` backfilled existing tenants with: the name their public page already showed.
     """
     words = [word[:1].upper() + word[1:] for word in slug.split("-") if word]
-    return " ".join(words)[:DISPLAY_NAME_MAX_LENGTH].rstrip() or "Clinic"
+    return " ".join(words)[:DISPLAY_NAME_MAX_LENGTH].rstrip() or "Workspace"
 
 
-def signup_display_name(clinic_name: str, *, slug: str) -> str:
+def signup_display_name(workspace_name: str, *, slug: str) -> str:
     """The display name a new clinic starts with: the name typed at signup, normalised.
 
     Signup accepts up to 255 characters (the legal name's bound); the display name keeps the first
@@ -215,11 +215,11 @@ def signup_display_name(clinic_name: str, *, slug: str) -> str:
     falls back to the slug's reading, so signup never fails on the display name.
     """
     try:
-        return normalise_display_name(clinic_name)
+        return normalise_display_name(workspace_name)
     except ValueError:
         pass
     collapsed = " ".join(
-        "".join(" " if not ch.isprintable() else ch for ch in clinic_name).split()
+        "".join(" " if not ch.isprintable() else ch for ch in workspace_name).split()
     )
     if len(collapsed) > DISPLAY_NAME_MAX_LENGTH:
         cut = collapsed[: DISPLAY_NAME_MAX_LENGTH + 1]
@@ -251,13 +251,13 @@ def public_workspace_for_slug(
     return None if row is None else PublicWorkspaceRead(display_name=row[0])
 
 
-def slugify(clinic_name: str) -> str:
+def slugify(workspace_name: str) -> str:
     """A routing slug: lower-case, hyphenated, within the column's 64 characters.
 
     The slug is routing only and never an authorisation input
     (`docs/features/01-tenancy-and-clinics/03-design.md`).
     """
-    slug = re.sub(r"[^a-z0-9]+", "-", clinic_name.lower()).strip("-")
+    slug = re.sub(r"[^a-z0-9]+", "-", workspace_name.lower()).strip("-")
     return slug[:64] or "organisation"
 
 
@@ -277,7 +277,7 @@ def _is_slug_collision(error: IntegrityError) -> bool:
 
 
 def create_tenant_for_signup(
-    session: Session, clinic_name: str, *, tenant_id: uuid.UUID | None = None
+    session: Session, workspace_name: str, *, tenant_id: uuid.UUID | None = None
 ) -> Tenant:
     """Create the organisation, inside the caller's transaction. **The caller commits.**
 
@@ -291,15 +291,15 @@ def create_tenant_for_signup(
     `app.tenant_id`) before the row exists; the row rolled back on a collision is retried under the
     same id, which is free again once the savepoint rolls back.
     """
-    base = slugify(clinic_name)
+    base = slugify(workspace_name)
     for slug in islice(_slug_candidates(base), MAX_SLUG_ATTEMPTS):
         try:
             with session.begin_nested():
                 tenant = Tenant(
                     id=tenant_id if tenant_id is not None else uuid.uuid4(),
                     slug=slug,
-                    legal_name=clinic_name,
-                    display_name=signup_display_name(clinic_name, slug=slug),
+                    legal_name=workspace_name,
+                    display_name=signup_display_name(workspace_name, slug=slug),
                     retention_profile=DEFAULT_RETENTION_PROFILE,
                 )
                 session.add(tenant)
@@ -312,7 +312,7 @@ def create_tenant_for_signup(
 
     # Fail closed rather than loop or invent a slug the caller did not ask for.
     raise RuntimeError(
-        f"could not find a free tenant slug for {clinic_name!r} in {MAX_SLUG_ATTEMPTS} attempts"
+        f"could not find a free tenant slug for {workspace_name!r} in {MAX_SLUG_ATTEMPTS} attempts"
     )
 
 

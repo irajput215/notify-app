@@ -23,20 +23,12 @@ class Settings(BaseSettings):
     )
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str
-    # Control 1 (`docs/reference/build-contract.md` §6): 15-minute access tokens.
-    # `docs/features/02-authentication/01-requirements.md` OPEN-2 records the source conflict (10
-    # minutes in doc 06 §3, 15 minutes in doc 02 §1 and doc 03 §4); 15 is the value the build
-    # contract states and the one this repository adopts.
-    #
-    # Until refresh-token rotation lands, this lifetime *is* the whole session: feature 02 specifies
-    # rotation and revocation (R4–R7) but they are blocked by D-003, so nothing extends a session
-    # past this token. The 8-day value this replaced was the template's, not a decision. The key is
-    # deliberately absent from `.env.example`; a deployment overrides it by setting it, and the
-    # default carries the control.
+    # 15-minute access tokens. Until refresh-token rotation lands, this lifetime *is* the whole
+    # session. Deliberately absent from `.env.example`; the default carries the control.
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
-    # The origin emailed links (password reset) point at. The backend serves the app at `/`, so
-    # locally that is the backend itself (`fastapi dev`, and compose.override.yml, on :8000).
-    FRONTEND_HOST: str = "http://localhost:8000"
+    # The origin of the Next.js frontend: the only CORS origin and the base of every emailed link
+    # (password reset, invitation, signup verification). Locally `next dev` on :3000.
+    FRONTEND_HOST: str = "http://localhost:3000"
     FASTAPI_ENV: Literal["development"] | None = None
 
     PROJECT_NAME: str
@@ -85,9 +77,8 @@ class Settings(BaseSettings):
     # not accepted inside the configured window"). The design does not fix the window; 72 hours lets
     # an invitation sent on a Friday be accepted on the Monday.
     STAFF_INVITATION_EXPIRE_HOURS: int = Field(default=72, ge=1, le=24 * 14)
-    # How long an organisation signup's verification link (and the unverified request) lives
-    # (`docs/reference/decisions/D-008-signup-email-verification.md`). A day: long enough to find the
-    # email, short enough that an unverified password verifier does not linger.
+    # How long a workspace signup's verification link (and the unverified request) lives. A day: long
+    # enough to find the email, short enough that an unverified password verifier does not linger.
     SIGNUP_VERIFICATION_EXPIRE_HOURS: int = Field(default=24, ge=1, le=24 * 7)
 
     @computed_field  # type: ignore[prop-decorator]
@@ -99,15 +90,13 @@ class Settings(BaseSettings):
     FIRST_SUPERUSER: EmailStr
     FIRST_SUPERUSER_PASSWORD: str
 
-    # The demo organisation is MVP seed data, not something a deployment should
-    # create implicitly. `initial_data.py` seeds it only when this is true, so a
-    # real environment must opt in.
+    # The demo workspace is seed data, not something a deployment should create implicitly.
+    # `initial_data.py` seeds it only when this is true, so a real environment must opt in.
     SEED_DEMO_TENANT: bool = False
 
-    # Self-registration at POST /users/signup. Open by default because a signup now
-    # registers an organisation (`clinic_name`), so a new account can only ever reach
-    # the tenant it created — see docs/reference/business-flow.md step ①. A deployment
-    # that would rather provision every account by hand sets this false.
+    # Self-registration at POST /users/signup. Open by default: a signup registers a new workspace,
+    # so a new account can only ever reach the workspace it created. A deployment that would rather
+    # provision every account by hand sets this false.
     USERS_OPEN_REGISTRATION: bool = True
 
     # Sliding-window rate limiting on the abuse-prone unauthenticated endpoints
@@ -120,16 +109,41 @@ class Settings(BaseSettings):
     SERVER_TIMING_ENABLED: bool = True
 
     # The bearer token of `POST /api/v1/internal/booking-notifications/run`, the endpoint a scheduler
-    # calls to send due booking reminders (`docs/reference/decisions/D-009-...`). Unset (the default)
-    # turns the endpoint off: it answers `404`. At least 32 characters when set; never logged.
+    # calls to send due booking reminders. Interim: replaced by a scheduled arq job once Redis is in.
+    # Unset (the default) turns the endpoint off: it answers `404`. At least 32 characters; never logged.
     BOOKING_NOTIFICATIONS_RUN_TOKEN: SecretStr | None = Field(
         default=None, min_length=32
     )
-    # Encrypts patient and practitioner identifiers at rest (Medicare, IHI, AHPRA; `app.core.field_crypto`).
-    # 32 random bytes, base64url. Unset, a key is derived from SECRET_KEY, which is fine for a local
-    # run but ties every stored identifier to SECRET_KEY: set this before real identifiers are stored,
-    # and never change it without re-encrypting.
+    # Encrypts sensitive fields at rest (contact phone numbers, Meta access tokens, Cliniko API keys;
+    # `app.core.field_crypto`). 32 random bytes, base64url. Unset, a key is derived from SECRET_KEY,
+    # which is fine for a local run but ties every stored value to SECRET_KEY: set this before real
+    # data is stored, and never change it without re-encrypting.
     FIELD_ENCRYPTION_KEY: SecretStr | None = None
+
+    # -- Redis and background jobs (arq) -------------------------------------------------------------
+    # The webhook intake queue, the outbound send queue (paced per WhatsApp number), scheduled jobs
+    # and, once there is more than one app instance, the rate-limit counters. Unset: no queue, and the
+    # in-process rate limiter is used.
+    REDIS_URL: str | None = None
+
+    # -- WhatsApp Cloud API (Meta) -------------------------------------------------------------------
+    # The app's own credentials. Each workspace's WhatsApp Business Account access token is stored per
+    # workspace, encrypted (`field_crypto`), never in settings.
+    META_APP_ID: str | None = None
+    META_APP_SECRET: SecretStr | None = None
+    # The token Meta echoes when subscribing the webhook (`hub.verify_token`).
+    META_WEBHOOK_VERIFY_TOKEN: SecretStr | None = None
+    META_GRAPH_API_VERSION: str = "v23.0"
+    META_GRAPH_API_BASE: HttpUrl = HttpUrl("https://graph.facebook.com")
+
+    # -- Cliniko (booking connector) -----------------------------------------------------------------
+    # API keys are per workspace and stored encrypted; Cliniko asks every client to identify itself.
+    CLINIKO_USER_AGENT: str = "Notify (support@example.com)"
+
+    # -- LLM (AI replies and summaries) --------------------------------------------------------------
+    ANTHROPIC_API_KEY: SecretStr | None = None
+    LLM_MODEL: str = "claude-sonnet-5-5"
+    LLM_MAX_TOKENS: int = Field(default=1024, ge=1, le=64000)
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":

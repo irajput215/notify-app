@@ -27,7 +27,7 @@ guarantee "never two reminders for one booking". A missed reminder is the accept
 
 ## What an email says, and what it never says
 
-The clinic's display name (PUBLIC), the date and time in Sydney, the reference and how to change it.
+The workspace's display name (PUBLIC), the date and time in Sydney, the reference and how to change it.
 Never the contact's name, the visit type, the practitioner or anything clinical; every value is
 HTML-escaped. Nothing about the recipient or the server's reply reaches a log line or the audit
 trail: the outcome is recorded as a code.
@@ -140,7 +140,7 @@ def render(
         subject = f"Your appointment with {clinic} is booked"
     context = {
         "project_name": settings.PROJECT_NAME,
-        "clinic": clinic,
+        "workspace": clinic,
         "heading": heading,
         "lead": lead,
         "preview": f"{day}, {time}. Reference {reference}.",
@@ -199,8 +199,7 @@ def _claim(
             contact_ids=[booking.contact_id for booking in bookings.values()],
         )
         clinic = (
-            identity_tenancy.tenant_display_name(session, tenant_id=tenant_id)
-            or "your clinic"
+            identity_tenancy.tenant_display_name(session, tenant_id=tenant_id) or "us"
         )
         emails: list[_Email] = []
         for notification_id, appointment_id_, notification_kind, attempts in claimed:

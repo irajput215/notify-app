@@ -37,7 +37,7 @@ class UserRegister(SQLModel):
     # The organisation being registered. When present, the signup creates the tenant
     # and makes the signer its administrator; the API keeps it optional so a platform
     # administrator can still create an unattached account.
-    clinic_name: str | None = Field(default=None, max_length=255)
+    workspace_name: str | None = Field(default=None, max_length=255)
 
 
 # Properties to receive via API on update, all are optional

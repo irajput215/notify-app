@@ -229,7 +229,7 @@ class SignupRequest(SQLModel, table=True):
     email: str = Field(max_length=255)
     email_key: str = Field(max_length=255)
     full_name: str | None = Field(default=None, max_length=255)
-    clinic_name: str | None = Field(default=None, max_length=255)
+    workspace_name: str | None = Field(default=None, max_length=255)
     hashed_password: str | None = Field(default=None)
     link_id: uuid.UUID = Field(default_factory=uuid.uuid4)
     sent_at: datetime = Field(sa_type=_TIMESTAMPTZ)

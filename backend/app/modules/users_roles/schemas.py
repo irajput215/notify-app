@@ -250,7 +250,7 @@ class OrganisationSignup(SQLModel):
     """The body of `POST /api/v1/users/signup` (D-008). Strict: any other key is `422`.
 
     The field rules are the ones `UserRegister` had (password 8 to 128 characters, the rest at most
-    255). `clinic_name` registers an organisation; without it the account belongs to none, which is
+    255). `workspace_name` registers an organisation; without it the account belongs to none, which is
     what a platform administrator registers.
     """
 
@@ -259,7 +259,7 @@ class OrganisationSignup(SQLModel):
     email: EmailStr = Field(max_length=255)
     password: str = Field(min_length=8, max_length=128)
     full_name: str | None = Field(default=None, max_length=255)
-    clinic_name: str | None = Field(default=None, max_length=255)
+    workspace_name: str | None = Field(default=None, max_length=255)
 
 
 class SignupAccepted(SQLModel):
