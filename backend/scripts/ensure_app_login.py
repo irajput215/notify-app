@@ -32,8 +32,7 @@ def main() -> int:
     user = os.environ.get("APP_DB_USER", "notify_api")
     password = os.environ.get("APP_DB_PASSWORD")
     if not url or not password:
-        sys.stderr.write("MIGRATION_DATABASE_URL and APP_DB_PASSWORD are required
-")
+        sys.stderr.write("MIGRATION_DATABASE_URL and APP_DB_PASSWORD are required\n")
         return 2
     role = sql.Identifier(user)
     secret = sql.Literal(password)
