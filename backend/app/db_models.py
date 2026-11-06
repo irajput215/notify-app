@@ -20,10 +20,6 @@ from app.modules.appointments.models import (
 )
 from app.modules.audit.models import AuditLogEntry
 from app.modules.care_relationships.models import CareRelationship
-from app.modules.clinical_records.models import (
-    ClinicalRecord,
-    ClinicalRecordVersion,
-)
 from app.modules.clinics.models import Clinic
 from app.modules.identity_tenancy.models import StepUpGrant, Tenant
 from app.modules.intake.models import IntakeApplication, PatientConsent, Pharmacy
@@ -33,13 +29,6 @@ from app.modules.patients.models import (
     PatientEmergencyContact,
 )
 from app.modules.practice.models import TenantSettings
-from app.modules.prescriptions.models import (
-    DispatchAttempt,
-    Prescription,
-    PrescriptionEvent,
-)
-from app.modules.sops.models import Sop, SopAcknowledgement, SopVersion
-from app.modules.tga_approvals.models import TgaApproval, TgaApprovalEvent
 from app.modules.users_roles.models import (
     Permission,
     PractitionerAgreement,
@@ -63,10 +52,7 @@ __all__ = [
     "AppointmentSettings",
     "AuditLogEntry",
     "CareRelationship",
-    "DispatchAttempt",
     "Clinic",
-    "ClinicalRecord",
-    "ClinicalRecordVersion",
     "IntakeApplication",
     "Patient",
     "PatientConsent",
@@ -76,20 +62,13 @@ __all__ = [
     "Permission",
     "PractitionerAgreement",
     "PractitionerIdentifier",
-    "Prescription",
-    "PrescriptionEvent",
     "Role",
     "RolePermission",
     "SignupRequest",
-    "Sop",
-    "SopAcknowledgement",
-    "SopVersion",
     "StaffInvitation",
     "StepUpGrant",
     "Tenant",
     "TenantSettings",
-    "TgaApproval",
-    "TgaApprovalEvent",
     "User",
     "UserRole",
 ]
