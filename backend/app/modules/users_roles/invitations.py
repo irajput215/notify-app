@@ -36,7 +36,7 @@ from app.core.password_bound_tokens import LinkClaims, PasswordBoundToken
 from app.core.security import get_password_hash
 
 PURPOSE = "staff-invitation"
-_LINK = PasswordBoundToken(purpose=PURPOSE, key_label=b"clinicos/staff-invitation/v1")
+_LINK = PasswordBoundToken(purpose=PURPOSE, key_label=b"notify/staff-invitation/v1")
 
 
 def _key() -> bytes:

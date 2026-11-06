@@ -7,19 +7,17 @@ Contract: `docs2/sdlc/04-calendar-and-booking/api.md` (agreed 2026-10-07, owner)
 
 `no_overlapping_appointments` is a *partial* `EXCLUDE USING gist` over
 `(tenant_id WITH =, practitioner_id WITH =, during WITH &&) WHERE status NOT IN ('CANCELLED',
-'NO_SHOW')`, created by the migration. It is the TGA grain technique
-(`app/modules/tga_approvals/models.py`), copied rather than re-invented:
+'NO_SHOW')`, created by the baseline migration:
 
 * `during` is a stored `tstzrange(starts_at, ends_at, '[)')`, **derived** by the
   `trg_appointment_during` trigger on every write and pinned by `ck_appointments_during`, so the
   range the constraint indexes can never describe a time the row's own columns do not. `[)` makes
   back-to-back bookings legal: 09:00-09:15 and 09:15-09:30 do not overlap.
 * Partial, so a cancelled or no-show booking frees its slot without being deleted.
-* `btree_gist` supplies the equality operator classes (already created by `d4f8c2a9b7e1`).
-* The constraint is declared here as an `Index` of the same name, for the reason the TGA model
-  gives: PostgreSQL reports an `EXCLUDE` constraint's backing index to reflection as an index, and a
-  same-named GiST index is the only declaration that keeps `alembic check` and
-  `tests/core/test_schema_conventions.py` both honest.
+* `btree_gist` supplies the equality operator classes (created by the baseline migration).
+* The constraint is declared here as an `Index` of the same name, because PostgreSQL reports an
+  `EXCLUDE` constraint's backing index to reflection as an index, and a same-named GiST index is the
+  only declaration that keeps `alembic check` honest (see the filter in `app/alembic/env.py`).
 
 ## The duration is the type's, and the status machine is R4's, in the database too
 
@@ -31,9 +29,8 @@ the same transitions first with `409 ILLEGAL_STATE_TRANSITION`; the trigger is t
 ## No foreign key to the account table
 
 `practitioner_id` and `created_by` name accounts in the legacy `user` table, which has no RLS and no
-`(tenant_id, id)` key (T1-03, blocked by D-003). The same choice `tga_approvals.created_by` made: the
-service checks the practitioner is a bookable account **of the session's tenant** before every write.
-The patient link is the tenant-bound composite key, as on every clinical table.
+`(tenant_id, id)` key. Instead the service checks the practitioner is a bookable account **of the session's tenant** before every write.
+The contact link is the tenant-bound composite key.
 """
 
 import uuid
@@ -46,9 +43,9 @@ from sqlmodel import Field, SQLModel
 
 # R2. The type decides the practitioner role and the length; the server computes `ends_at` from it.
 APPOINTMENT_TYPES: Final[dict[str, tuple[str, int]]] = {
-    "NURSE_TRIAGE": ("NURSE", 15),
-    "INITIAL_CONSULT": ("DOCTOR", 30),
-    "FOLLOW_UP": ("DOCTOR", 15),
+    "SHORT": ("STAFF", 15),
+    "STANDARD": ("STAFF", 30),
+    "EXTENDED": ("STAFF", 60),
 }
 
 APPOINTMENT_STATUSES: Final[tuple[str, ...]] = (
@@ -119,7 +116,7 @@ NOTIFICATION_OUTCOMES: Final[tuple[str, ...]] = (
     "STARTED",
     "NO_EMAIL",
     "SMTP_ERROR",
-    # The patient opted out of communications (manual §3.4): reminders stop, confirmations do not.
+    # The contact opted out of communications (manual §3.4): reminders stop, confirmations do not.
     "OPTED_OUT",
 )
 
@@ -131,7 +128,7 @@ def _utcnow() -> datetime:
 
 
 class Appointment(SQLModel, table=True):
-    """One booking of one patient with one practitioner, half-open `[starts_at, ends_at)`."""
+    """One booking of one contact with one practitioner, half-open `[starts_at, ends_at)`."""
 
     __tablename__ = "appointments"
     __table_args__ = (
@@ -141,11 +138,11 @@ class Appointment(SQLModel, table=True):
         sa.CheckConstraint(_DURATION_SQL, name="duration"),
         sa.CheckConstraint(f"during = {DURING_SQL}", name="during"),
         sa.UniqueConstraint("tenant_id", "id", name="uq_appointments_tenant_id_id"),
-        # A booking can only name a patient of its own tenant.
+        # A booking can only name a contact of its own tenant.
         sa.ForeignKeyConstraint(
-            ["tenant_id", "patient_id"],
-            ["patients.tenant_id", "patients.id"],
-            name="fk_appointments_tenant_patient",
+            ["tenant_id", "contact_id"],
+            ["contacts.tenant_id", "contacts.id"],
+            name="fk_appointments_tenant_contact",
             ondelete="RESTRICT",
         ),
         # R3: the backing index of the partial EXCLUDE constraint the migration creates.
@@ -161,9 +158,9 @@ class Appointment(SQLModel, table=True):
         # The calendar's read path: one tenant, a time window. `tenant_id` leads every index.
         sa.Index("ix_appointments_tenant_starts", "tenant_id", "starts_at"),
         sa.Index(
-            "ix_appointments_tenant_patient_starts",
+            "ix_appointments_tenant_contact_starts",
             "tenant_id",
-            "patient_id",
+            "contact_id",
             "starts_at",
         ),
     )
@@ -176,7 +173,7 @@ class Appointment(SQLModel, table=True):
     tenant_id: uuid.UUID = Field(
         foreign_key="tenants.id", ondelete="RESTRICT", nullable=False
     )
-    patient_id: uuid.UUID = Field(nullable=False)
+    contact_id: uuid.UUID = Field(nullable=False)
     practitioner_id: uuid.UUID = Field(nullable=False)
     type: str
     status: str = Field(default="BOOKED")

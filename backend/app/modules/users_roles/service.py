@@ -56,7 +56,7 @@ from app.models import User
 # `users_roles` — so there is no cycle.
 from app.modules.audit import service as audit
 from app.modules.identity_tenancy import service as identity_tenancy
-from app.modules.users_roles import invitations, onboarding
+from app.modules.users_roles import invitations
 from app.modules.users_roles.catalog import (
     ADMINISTRATION_PERMISSION,
     BOOTSTRAP_ROLE_CODE,
@@ -68,7 +68,6 @@ from app.modules.users_roles.catalog import (
     SYSTEM_ROLE_CATALOGUE,
     USER_CREATE,
     USER_PERMISSION_CHANGE,
-    grant_is_unconditional,
 )
 from app.modules.users_roles.models import (
     Permission,
@@ -317,33 +316,23 @@ def held_grants_in_context_statement(
 
 @dataclass(frozen=True)
 class HeldGrants:
-    """What an account holds in one tenant, from the `(role_code, permission_code)` rows.
-
-    `unscoped_permissions` is the subset of `permissions` that at least one held role grants without
-    the matrix's care-relationship modifier (`catalog.grant_is_unconditional`); the policy layer reads
-    it for a patient resource (`Actor.unscoped_permissions`).
-    """
+    """What an account holds in one tenant, from the `(role_code, permission_code)` rows."""
 
     permissions: frozenset[str]
     role_codes: frozenset[str]
-    unscoped_permissions: frozenset[str]
 
 
 def grants_from_rows(rows: Iterable[Sequence[str | None]]) -> HeldGrants:
     permissions: set[str] = set()
     role_codes: set[str] = set()
-    unscoped: set[str] = set()
     for role_code, permission_code in rows:
         if role_code:
             role_codes.add(role_code)
         if permission_code:
             permissions.add(permission_code)
-            if role_code and grant_is_unconditional(role_code, permission_code):
-                unscoped.add(permission_code)
     return HeldGrants(
         permissions=frozenset(permissions),
         role_codes=frozenset(role_codes),
-        unscoped_permissions=frozenset(unscoped),
     )
 
 
@@ -416,7 +405,6 @@ def actor_for(
         is_active=is_active,
         permissions=grants.permissions,
         role_codes=grants.role_codes,
-        unscoped_permissions=grants.unscoped_permissions,
     )
 
 
@@ -636,7 +624,6 @@ def own_permissions(actor: Actor) -> OwnPermissionsRead:
     """
     return OwnPermissionsRead(
         permissions=sorted(actor.permissions),
-        relationship_bound=sorted(actor.permissions - actor.unscoped_permissions),
         role_codes=sorted(actor.role_codes),
     )
 
@@ -1002,23 +989,6 @@ def list_staff(*, tenant_id: uuid.UUID, skip: int, limit: int) -> StaffPublic:
             _staff_member(user, held[user.id], invited[user.id], now=now)
             for user in users.values()
         ]
-        # docs3 feature 02 (R2): an active prescriber's pack, in one statement for the page.
-        prescribers = [
-            entry.id
-            for entry in members
-            if entry.status == "ACTIVE"
-            and onboarding.PRESCRIBER_ROLES & {role.code for role in entry.roles}
-        ]
-        missing = onboarding.missing_for_many(
-            session, tenant_id=tenant_id, user_ids=prescribers
-        )
-        for staff_member in members:
-            if staff_member.status != "ACTIVE":
-                staff_member.onboarding_status = staff_member.status
-            elif staff_member.id in missing:
-                staff_member.onboarding_status = (
-                    "PACK_INCOMPLETE" if missing[staff_member.id] else "READY"
-                )
         return StaffPublic(data=members, count=count)
 
 
@@ -1547,17 +1517,16 @@ def accept_invitation(*, token: str, new_password: str) -> InvitationAccepted | 
 
 
 def _display_name(user: User) -> str:
-    """How a colleague is named on a clinical screen: the full name, else the sign-in address."""
+    """How a colleague is named on screen: the full name, else the sign-in address."""
     return user.full_name or user.email
 
 
 def holders_of(*, tenant_id: uuid.UUID, permission: str) -> dict[uuid.UUID, str]:
     """The active accounts of this organisation whose roles grant `permission`, with display names.
 
-    The prescriptions module asks it *"who may sign?"* to offer the reviewing-doctor list and to
-    refuse a draft addressed to someone who cannot sign it. The answer is decided from the permission,
-    never from a role name, so a tenant whose bundles change gets the right list without a code change
-    (`01-requirements.md`: *"a route handler never branches on a role name"*).
+    For a module that needs "who may do X?" (an assignee list, say). The answer is decided from the
+    permission, never from a role name, so a workspace whose bundles change gets the right list
+    without a code change.
 
     The legacy `user` table carries no RLS (T1-03, blocked by D-003), so the explicit `tenant_id`
     predicate is the isolation control for the accounts, as in `list_staff`; the RBAC reads run under

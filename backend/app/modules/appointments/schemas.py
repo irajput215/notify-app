@@ -6,14 +6,14 @@ exception is `tenant_id`, which INV-1 says is **ignored and audited** rather tha
 before validation and the router records the attempt in the request's own transaction.
 
 The public booking body accepts the minimum a booking needs and nothing clinical: name, date of birth
-and contact details (to create or match the patient), the slot, and the APP 5 consent. The page's
+and contact details (to create or match the contact), the slot, and the APP 5 consent. The page's
 eligibility questions stay in the browser - they decide whether to offer a booking, and a free-text
 "what would you like help with" from an anonymous form is health information the clinic does not need
 before the consult.
 """
 
 import uuid
-from datetime import date, datetime, time
+from datetime import datetime, time
 from typing import Any, Literal, Self
 
 from pydantic import (
@@ -28,17 +28,16 @@ from pydantic import (
     model_validator,
 )
 
-from app.modules.intake.schemas import IntakeApplicationIn
-
-AppointmentType = Literal["NURSE_TRIAGE", "INITIAL_CONSULT", "FOLLOW_UP"]
+AppointmentType = Literal["SHORT", "STANDARD", "EXTENDED"]
 AppointmentStatus = Literal[
     "BOOKED", "CONFIRMED", "ARRIVED", "COMPLETED", "CANCELLED", "NO_SHOW"
 ]
 AppointmentSource = Literal["STAFF", "PUBLIC_BOOKING"]
-PractitionerRole = Literal["DOCTOR", "NURSE"]
+PractitionerRole = Literal["STAFF"]
 
 # An Australian mobile, with or without the country code and the usual spaces (R5).
-AU_MOBILE_PATTERN = r"^(\+?61|0)4\d{2} ?\d{3} ?\d{3}$"
+# Any common phone format; the contacts module normalises it to E.164 and refuses what it cannot place.
+PHONE_PATTERN = r"^\+?[0-9 ().-]{8,24}$"
 # A personal name as typed: letters, spaces and the punctuation names carry. No control characters,
 # no markup, bounded - the field reaches a clinical record.
 NAME_PATTERN = r"^[^\x00-\x1f\x7f<>]{1,100}$"
@@ -70,8 +69,7 @@ class _IgnoresClientTenantId(BaseModel):
 
 
 class PractitionerRead(BaseModel):
-    """A bookable member of staff: an active account holding a Doctor, Authorised Prescriber or
-    Nurse role in the session's organisation."""
+    """A bookable member of staff: an active account holding a bookable role (any system role)."""
 
     id: uuid.UUID
     name: str
@@ -81,8 +79,8 @@ class PractitionerRead(BaseModel):
 
 class AppointmentRead(BaseModel):
     id: uuid.UUID
-    patient_id: uuid.UUID
-    patient_name: str
+    contact_id: uuid.UUID
+    contact_name: str
     practitioner_id: uuid.UUID
     type: AppointmentType
     status: AppointmentStatus
@@ -113,7 +111,7 @@ class DaySchedule(BaseModel):
 class AppointmentCreate(_IgnoresClientTenantId):
     """`POST /appointments`. The server computes `ends_at` from the type (R2)."""
 
-    patient_id: uuid.UUID
+    contact_id: uuid.UUID
     practitioner_id: uuid.UUID
     type: AppointmentType
     starts_at: AwareDatetime
@@ -128,7 +126,7 @@ class AppointmentStatusUpdate(BaseModel):
 
 
 class PublicSlot(BaseModel):
-    """One free, bookable time. Only what the booking page shows: never another patient's data."""
+    """One free, bookable time. Only what the booking page shows: never another contact's data."""
 
     practitioner_id: uuid.UUID
     practitioner_name: str
@@ -137,25 +135,21 @@ class PublicSlot(BaseModel):
 
 
 class PublicBookingRequest(_IgnoresClientTenantId):
-    """`POST /public/{clinic_slug}/bookings`: a slot, who the patient is, and the APP 5 consent."""
+    """`POST /public/{workspace_slug}/bookings`: a slot, who the contact is, and the APP 5 consent."""
 
     type: AppointmentType
     practitioner_id: uuid.UUID
     starts_at: AwareDatetime
     given_name: str = Field(pattern=NAME_PATTERN)
     family_name: str = Field(pattern=NAME_PATTERN)
-    date_of_birth: date
     email: EmailStr = Field(max_length=255)
-    phone: str = Field(pattern=AU_MOBILE_PATTERN, max_length=16)
+    phone: str = Field(pattern=PHONE_PATTERN, max_length=32)
     # R5: consent to the APP 5 collection notice. `true` is the only value that books.
     consent: Literal[True]
-    # docs3 feature 03: the six-step application. With it, the booking is held for the clinic to
-    # review (Patients > Online applications); without it, a plain booking as before.
-    application: IntakeApplicationIn | None = None
 
 
 class PublicBookingCreated(BaseModel):
-    """The confirmation. The same shape whether the patient was new or matched (never says which)."""
+    """The confirmation. The same shape whether the contact was new or matched (never says which)."""
 
     reference: str
 

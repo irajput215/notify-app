@@ -37,7 +37,7 @@ class UserRegister(SQLModel):
     # The organisation being registered. When present, the signup creates the tenant
     # and makes the signer its administrator; the API keeps it optional so a platform
     # administrator can still create an unattached account.
-    clinic_name: str | None = Field(default=None, max_length=255)
+    workspace_name: str | None = Field(default=None, max_length=255)
 
 
 # Properties to receive via API on update, all are optional
@@ -70,7 +70,7 @@ class User(UserBase, table=True):
     # The organisation this account belongs to. Nullable for now: the platform
     # administrator predates tenancy, and `tenants` is global rather than row-secured,
     # so the column is a link rather than an isolation boundary. Enforcing it belongs
-    # with the first tenant-scoped table (patients), not with this one.
+    # with the tenant-scoped tables, not with this one.
     # SET NULL: closing an organisation must not fail because an account pointed at it.
     tenant_id: uuid.UUID | None = Field(
         default=None,

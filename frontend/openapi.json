@@ -1,0 +1,5226 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Notify",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/v1/health/ready/": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Readiness probe",
+        "description": "Report whether this process can reach its database.\n\nUnauthenticated by design and therefore returns **no more than a boolean** \u2014 no version, no\ndependency list, no error detail, no tenant data. A deploy pipeline polls this to decide whether\na release actually works; a non-200 means the app is up but cannot serve, which is exactly the\nfailure a liveness probe cannot see.",
+        "operationId": "health-readiness",
+        "responses": {
+          "200": {
+            "description": "The process can serve requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The process cannot reach its database.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/login/access-token": {
+      "post": {
+        "tags": [
+          "login"
+        ],
+        "summary": "Login Access Token",
+        "description": "OAuth2 compatible token login, get an access token for future requests\n\nThe account read is one statement on the autocommit engine: no `BEGIN` and no `ROLLBACK`\naround it, so sign-in costs one database round trip instead of three (each ~210 ms while the\napp and the database are not co-located, `docs/reference/performance.md`). The rare rehash\nwrite commits on its own, exactly as before.",
+        "operationId": "login-login_access_token",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_login-login_access_token"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Token"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/login/test-token": {
+      "post": {
+        "tags": [
+          "login"
+        ],
+        "summary": "Test Token",
+        "description": "Test access token\n\nCarries the tenant-status refusal (R10) like the other self-service routes: a suspended\norganisation's session is refused here too, not only where tenant data is read.",
+        "operationId": "login-test_token",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/password-recovery/{email}": {
+      "post": {
+        "tags": [
+          "login"
+        ],
+        "summary": "Recover Password",
+        "description": "Password Recovery",
+        "operationId": "login-recover_password",
+        "parameters": [
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Email"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/reset-password/": {
+      "post": {
+        "tags": [
+          "login"
+        ],
+        "summary": "Reset Password",
+        "description": "Reset password\n\nCarries the same 5/min recovery limit as the request route\n(`docs/reference/build-contract.md` control 10): the reset token is a bearer credential that\ngrants a session, so guessing one must be at least as expensive as asking for one. Both routes\nshare the `password-recovery` window, which caps recovery work from one address in total.",
+        "operationId": "login-reset_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewPassword"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/staff": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "List Staff",
+        "description": "List the caller's organisation's accounts and the roles each holds.",
+        "operationId": "users-list_staff",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffPublic"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Invite Staff",
+        "description": "Onboard a staff member: create the account in the caller's organisation with the chosen\nroles, and email them a link to set their own password.\n\nThe caller can grant only roles whose permissions they hold (R3, `403 GRANT_EXCEEDS_ACTOR`).",
+        "operationId": "users-invite_staff",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffInvite"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMemberRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "A role is absent, or belongs to another organisation"
+          },
+          "409": {
+            "description": "Refused: the address already has an account. The same answer whichever organisation holds it, so no organisation is disclosed."
+          },
+          "503": {
+            "description": "Outgoing mail is not configured, so no invitation can be sent"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/staff/{user_id}/invitation": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Resend Invitation",
+        "description": "Resend an invitation: email a fresh link, retire the previous one and restart the window.\n\nChecked exactly like sending one: `users:manage`, then R3 over the roles the person holds now\n(`403 GRANT_EXCEEDS_ACTOR`). Only an outstanding invitation can be resent (`409`).",
+        "operationId": "users-resend_invitation",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffMemberRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The account is absent, or belongs to another organisation"
+          },
+          "409": {
+            "description": "Refused: no invitation is outstanding (it was accepted, the person never needed one, or the account is deactivated)"
+          },
+          "503": {
+            "description": "Outgoing mail is not configured, so no invitation can be sent"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/signup": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Register User",
+        "description": "Register an organisation: email a link that creates it (D-008).\n\nThe answer is the same for every address. A new address is emailed a single-use link that\ncreates the organisation and signs its owner in; an address that already has an account is\nemailed a notice instead. Nothing exists until the link is used.",
+        "operationId": "users-register_user",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganisationSignup"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignupAccepted"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Open registration is off"
+          },
+          "503": {
+            "description": "Outgoing mail is not configured, so nothing is created"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/signup/resend": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Resend Signup Email",
+        "description": "Send a signup's email again with a fresh link. The same answer whatever the id.",
+        "operationId": "users-resend_signup_email",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupResend"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/signup/verify": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Verify Signup",
+        "description": "Spend a signup link: create the organisation and its owner, and sign the owner in.",
+        "operationId": "users-verify_signup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupVerify"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Token"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The link is invalid, expired, replaced or already used"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/invitations/accept": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Accept Invitation",
+        "description": "Spend an emailed invitation link: the invitee chooses their own password.",
+        "operationId": "users-accept_invitation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationAccept"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationAccepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The link is invalid, expired or already used"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Read Users",
+        "description": "Retrieve users.",
+        "operationId": "users-read_users",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsersPublic"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Create User",
+        "description": "Create new user.\n\nNever a superuser: that flag is set only by `FIRST_SUPERUSER` at start-up. The application role\ncannot change it afterwards (migration `e1a4c7b9d2f3`), so it is not granted from an API either.",
+        "operationId": "users-create_user",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/me": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Read User Me",
+        "description": "Get current user.",
+        "operationId": "users-read_user_me",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Delete User Me",
+        "description": "Deactivate own user.\n\nKept as `DELETE /users/me` for the clients that call it, but it deactivates: the account and its\nattribution survive, and its next request is `401`.",
+        "operationId": "users-delete_user_me",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Update User Me",
+        "description": "Update own user.",
+        "operationId": "users-update_user_me",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpdateMe"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/me/password": {
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Update Password Me",
+        "description": "Update own password.",
+        "operationId": "users-update_password_me",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePassword"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/{user_id}": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Read User By Id",
+        "description": "Get a specific user by id.",
+        "operationId": "users-read_user_by_id",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Update User",
+        "description": "Update a user.",
+        "operationId": "users-update_user",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Delete User",
+        "description": "Deactivate a user.\n\nAdministered offboarding, answered with the route's existing `DELETE` verb: R14, and the reason\nthe foreign keys on `user_roles` are `ON DELETE RESTRICT`. Nothing is removed from the database \u2014\nthe account, its grants and its audit attribution stay \u2014 and the account's next request is `401`.",
+        "operationId": "users-delete_user",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/utils/test-email/": {
+      "post": {
+        "tags": [
+          "utils"
+        ],
+        "summary": "Test Email",
+        "description": "Test emails.",
+        "operationId": "utils-test_email",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "email_to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "email",
+              "title": "Email To"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/utils/health-check/": {
+      "get": {
+        "tags": [
+          "utils"
+        ],
+        "summary": "Health Check",
+        "operationId": "utils-health_check",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean",
+                  "title": "Response Utils-Health Check"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contacts": {
+      "post": {
+        "tags": [
+          "contacts"
+        ],
+        "summary": "Create Contact",
+        "description": "Create a contact in the caller's workspace. The workspace comes from the session.",
+        "operationId": "contacts-create_contact",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContactCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "contacts"
+        ],
+        "summary": "List Contacts",
+        "description": "One keyset page of the workspace's contacts. Follow `next_cursor` for the next page.",
+        "operationId": "contacts-list_contacts",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "ACTIVE",
+                      "BLOCKED",
+                      "ARCHIVED"
+                    ],
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactsPublic"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contacts/search": {
+      "post": {
+        "tags": [
+          "contacts"
+        ],
+        "summary": "Search Contacts",
+        "description": "Find contacts by name or email prefix, exact phone number, or `#tag`. Keyset-paged.",
+        "operationId": "contacts-search_contacts",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContactSearch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactsPublic"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/contacts/{contact_id}": {
+      "get": {
+        "tags": [
+          "contacts"
+        ],
+        "summary": "Read Contact",
+        "description": "One contact. Another workspace's contact is `404`.",
+        "operationId": "contacts-read_contact",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "contact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Contact Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "contacts"
+        ],
+        "summary": "Update Contact",
+        "description": "Change the fields sent; the rest are left alone.",
+        "operationId": "contacts-update_contact",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "contact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Contact Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContactUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contacts/{contact_id}/opt-in": {
+      "post": {
+        "tags": [
+          "contacts"
+        ],
+        "summary": "Record Opt In",
+        "description": "Record a WhatsApp opt-in or opt-out, and how it was given.",
+        "operationId": "contacts-record_opt_in",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "contact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Contact Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContactOptIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contacts/{contact_id}/status": {
+      "post": {
+        "tags": [
+          "contacts"
+        ],
+        "summary": "Change Contact Status",
+        "description": "Block (no new bookings), archive (leaves the list) or reactivate a contact.",
+        "operationId": "contacts-change_contact_status",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "contact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Contact Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContactStatusChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/roles": {
+      "get": {
+        "tags": [
+          "roles"
+        ],
+        "summary": "List Roles",
+        "description": "List the organisation's roles with each role's permission bundle.",
+        "operationId": "roles-list_roles",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RolesPublic"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/permissions": {
+      "get": {
+        "tags": [
+          "permissions"
+        ],
+        "summary": "List Permissions",
+        "description": "List the global permission catalogue (read-only reference data; R7).",
+        "operationId": "permissions-list_permissions",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionsPublic"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/me/permissions": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Read Own Permissions",
+        "description": "The caller's own effective permission codes. Advisory UI data; never a control.",
+        "operationId": "users-read_own_permissions",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnPermissionsRead"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/{user_id}/roles": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Read User Roles",
+        "description": "List the roles one account of the caller's tenant holds. Another tenant's account is `404`.",
+        "operationId": "users-read_user_roles",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRolesPublic"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Assign Role",
+        "description": "Grant a role to an account. `201` when created, `200` when the account already holds it.\n\nThe grantability rule (R3) is applied in the service before the row is written: a bundle\ncontaining a permission the caller does not hold is refused `403 GRANT_EXCEEDS_ACTOR`.",
+        "operationId": "users-assign_role",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleAssignmentCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleRead"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "The account already held the role; nothing was written",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/permissions": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Read User Permissions",
+        "description": "The effective permission set of one account, computed server-side. Cross-tenant is `404`.",
+        "operationId": "users-read_user_permissions",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPermissionsRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/roles/{role_id}": {
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Revoke Role",
+        "description": "Revoke a role from an account. The delete is real; the audit trail is the history.\n\nR8: the removal that would leave the organisation with nobody holding `users:manage` is refused\n`409 LAST_ADMINISTRATOR` and nothing is removed.",
+        "operationId": "users-revoke_role",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "role_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Role Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "Refused: this is the organisation's last role granting `users:manage` (R8). Assign another administrator first."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/current": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Read Current Tenant",
+        "description": "Return the caller's own tenant. `retention_profile` is never part of the answer (US-1).",
+        "operationId": "workspaces-read_current_tenant",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantCurrentRead"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Update Current Tenant",
+        "description": "Refuse a tenant security-setting change: the required step-up control is not built (R12).\n\nThe body has already been validated by the time this runs \u2014 `TenantSettingsUpdate` declares no\nfield and forbids extras, so a body `tenant_id` or any other name is a `422` from the validation\nlayer and never reaches this function. What remains is the authorisation decision and the refusal\nthat the missing step-up forces; the declaration on this module records why no success path exists\nand what the writer must emit when it does.",
+        "operationId": "workspaces-update_current_tenant",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TenantSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Refused. `PERMISSION_NOT_HELD` when the caller does not hold `tenant:configure`; `STEP_UP_REQUIRED` for a caller who does, because the step-up control this route requires is not built (feature 02, blocked by D-003). Nothing is written."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/current/profile": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Read Current Tenant Profile",
+        "description": "The caller's own clinic's display name, for every member of it.\n\nNo permission code: the display name is PUBLIC (the booking page shows it to anyone), and the\nroute answers only for the session's own organisation. An account with no organisation, or one\nwhose organisation is not active, is refused by `get_actor` before this runs.",
+        "operationId": "workspaces-read_current_tenant_profile",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantProfileRead"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Update Current Tenant Profile",
+        "description": "Rename the caller's own clinic (Practice Owner). Audited on the same transaction.\n\nThe body is validated first (a blank, over-long or unprintable name is a `422`), then the\npermission is decided; a refusal is audited before it is raised.",
+        "operationId": "workspaces-update_current_tenant_profile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TenantProfileUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantProfileRead"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`PERMISSION_NOT_HELD`: renaming the clinic needs `tenant:configure`. Audited `tenant.config_changed` `DENIED`; nothing is changed."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/audit/events": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "List Audit Events",
+        "description": "One keyset page of the caller's audit trail, newest first, and the read is itself audited.",
+        "operationId": "audit-list_audit_events",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 512
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
+            }
+          },
+          {
+            "name": "actor_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Actor Id"
+            }
+          },
+          {
+            "name": "resource_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 32
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resource Type"
+            }
+          },
+          {
+            "name": "resource_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resource Id"
+            }
+          },
+          {
+            "name": "result",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Result"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditEventsPublic"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/audit/events/{event_id}": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Read Audit Event",
+        "description": "One event of the caller's trail. Another tenant's event is `404`, and the attempt is audited.",
+        "operationId": "audit-read_audit_event",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditEventRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/practitioners": {
+      "get": {
+        "tags": [
+          "appointments"
+        ],
+        "summary": "List Practitioners",
+        "description": "Bookable staff: active accounts holding a Doctor, Authorised Prescriber or Nurse role.",
+        "operationId": "appointments-list_practitioners",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PractitionerRead"
+                  },
+                  "type": "array",
+                  "title": "Response Appointments-List Practitioners"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/appointments": {
+      "get": {
+        "tags": [
+          "appointments"
+        ],
+        "summary": "List Appointments",
+        "description": "Appointments starting in `[from, to)`, at most 31 days, earliest first.",
+        "operationId": "appointments-list_appointments",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "title": "From"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "title": "To"
+            }
+          },
+          {
+            "name": "practitioner_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Practitioner Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AppointmentRead"
+                  },
+                  "title": "Response Appointments-List Appointments"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Absent, or another organisation's"
+          },
+          "409": {
+            "description": "Refused by the booking rules (overlap, slot taken, illegal transition)"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "appointments"
+        ],
+        "summary": "Create Appointment",
+        "description": "Book a contact with a practitioner. `409 APPOINTMENT_OVERLAP` names the clash's time.\n\nThe contact's confirmation email is sent after the booking commits (when email is configured).",
+        "operationId": "appointments-create_appointment",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppointmentCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppointmentRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Absent, or another organisation's"
+          },
+          "409": {
+            "description": "Refused by the booking rules (overlap, slot taken, illegal transition)"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/appointments/{appointment_id}/status": {
+      "post": {
+        "tags": [
+          "appointments"
+        ],
+        "summary": "Change Appointment Status",
+        "description": "Move a booking through its states. `409 ILLEGAL_STATE_TRANSITION` outside R4's table.",
+        "operationId": "appointments-change_appointment_status",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "appointment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Appointment Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppointmentStatusUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppointmentRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Absent, or another organisation's"
+          },
+          "409": {
+            "description": "Refused by the booking rules (overlap, slot taken, illegal transition)"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contacts/{contact_id}/appointments": {
+      "get": {
+        "tags": [
+          "appointments"
+        ],
+        "summary": "List Contact Appointments",
+        "description": "One contact's bookings, newest first. Another workspace's contact is `404`.",
+        "operationId": "appointments-list_contact_appointments",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "contact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Contact Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AppointmentRead"
+                  },
+                  "title": "Response Appointments-List Contact Appointments"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Absent, or another organisation's"
+          },
+          "409": {
+            "description": "Refused by the booking rules (overlap, slot taken, illegal transition)"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/public/{workspace_slug}": {
+      "get": {
+        "tags": [
+          "public-booking"
+        ],
+        "summary": "Read Public Workspace",
+        "description": "The clinic's public display name, for the booking page's heading. Unauthenticated.\n\nOnly the PUBLIC display name: never `legal_name`, the tenant id or the status. Resolved like the\nother public routes (only an `ACTIVE` clinic; anything else is the same `404 WORKSPACE_NOT_FOUND`).",
+        "operationId": "public-booking-read_public_workspace",
+        "parameters": [
+          {
+            "name": "workspace_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Slug"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicWorkspaceRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such clinic, or not taking bookings"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/public/{workspace_slug}/slots": {
+      "get": {
+        "tags": [
+          "public-booking"
+        ],
+        "summary": "List Public Slots",
+        "description": "Free slots for one visit type over the next 14 days. Unauthenticated.",
+        "operationId": "public-booking-list_public_slots",
+        "parameters": [
+          {
+            "name": "workspace_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Slug"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "SHORT",
+                "STANDARD",
+                "EXTENDED"
+              ],
+              "type": "string",
+              "title": "Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PublicSlot"
+                  },
+                  "title": "Response Public-Booking-List Public Slots"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such clinic, or not taking bookings"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/public/{workspace_slug}/bookings": {
+      "post": {
+        "tags": [
+          "public-booking"
+        ],
+        "summary": "Create Public Booking",
+        "description": "Book from the public page. The same answer whether the contact was new or already known.",
+        "operationId": "public-booking-create_public_booking",
+        "parameters": [
+          {
+            "name": "workspace_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Slug"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicBookingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicBookingCreated"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such clinic, or not taking bookings"
+          },
+          "409": {
+            "description": "`SLOT_TAKEN`: somebody booked that time first"
+          },
+          "415": {
+            "description": "Not `application/json`"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/appointment-settings": {
+      "get": {
+        "tags": [
+          "appointments"
+        ],
+        "summary": "Read Appointment Settings",
+        "description": "The clinic's hours and slot length, for every member: opening hours are PUBLIC.",
+        "operationId": "appointments-read_appointment_settings",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppointmentSettingsRead"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "appointments"
+        ],
+        "summary": "Update Appointment Settings",
+        "description": "Set the hours per weekday and the slot length (Practice Owner). Audited on its transaction.",
+        "operationId": "appointments-update_appointment_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppointmentSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppointmentSettingsSaved"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`PERMISSION_NOT_HELD`: changing the hours needs `tenant:configure`. Audited; nothing changes."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/internal/booking-notifications/run": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "summary": "Run Booking Notifications",
+        "description": "Send every due booking confirmation and reminder, one tenant at a time. Counts only.\n\nFor a scheduler (D-009). No tenant is named by the caller: the job reads the active tenants and\nruns each in its own transaction. Idempotent: a second call sends nothing the first one sent.",
+        "operationId": "internal-run_booking_notifications",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationRunReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Wrong or missing token"
+          },
+          "404": {
+            "description": "The job endpoint is not enabled on this server"
+          },
+          "503": {
+            "description": "`EMAIL_NOT_CONFIGURED`: outgoing email is off"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/step-up": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Step Up",
+        "description": "Re-prove the factor (interim: the password, ADR-F002) for one operation on one resource.\n\n`docs/features/02-authentication/03-design.md` names this route (`POST /api/v1/auth/step-up`,\n*\"issue a single-use resource-bound step-up token\"*). The grant lives two minutes, is bound to this\naccount, the operation and the resource id, and is spent by the operation's own transaction. No\npermission is checked here: the grant authorises nothing by itself, and the operation that spends\nit checks its own permission first. A wrong password answers `403`, never `401`, so the client\ndoes not sign the clinician out for a typo.",
+        "operationId": "auth-step_up",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StepUpRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StepUpGrantRead"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`STEP_UP_FAILED`: the password did not verify. Audited; nothing issued."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/current/setup": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Read Setup",
+        "description": "The setup checklist for whoever configures the workspace (`workspace:configure`).",
+        "operationId": "workspaces-read_setup",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupRead"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/current/settings": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Read Settings",
+        "description": "The workspace settings (`workspace:read`); the defaults when none were saved.",
+        "operationId": "workspaces-read_settings",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeSettingsRead"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Update Settings",
+        "description": "Save the workspace settings (`workspace:configure`).\nAudited `tenant.config_changed` with the names of the fields that changed.",
+        "operationId": "workspaces-update_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PracticeSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeSettingsRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AppointmentCreate": {
+        "properties": {
+          "contact_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Contact Id"
+          },
+          "practitioner_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Practitioner Id"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "SHORT",
+              "STANDARD",
+              "EXTENDED"
+            ],
+            "title": "Type"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "contact_id",
+          "practitioner_id",
+          "type",
+          "starts_at"
+        ],
+        "title": "AppointmentCreate",
+        "description": "`POST /appointments`. The server computes `ends_at` from the type (R2)."
+      },
+      "AppointmentRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "contact_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Contact Id"
+          },
+          "contact_name": {
+            "type": "string",
+            "title": "Contact Name"
+          },
+          "practitioner_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Practitioner Id"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "SHORT",
+              "STANDARD",
+              "EXTENDED"
+            ],
+            "title": "Type"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "BOOKED",
+              "CONFIRMED",
+              "ARRIVED",
+              "COMPLETED",
+              "CANCELLED",
+              "NO_SHOW"
+            ],
+            "title": "Status"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ends At"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "STAFF",
+              "PUBLIC_BOOKING"
+            ],
+            "title": "Source"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "contact_id",
+          "contact_name",
+          "practitioner_id",
+          "type",
+          "status",
+          "starts_at",
+          "ends_at",
+          "source",
+          "created_at"
+        ],
+        "title": "AppointmentRead"
+      },
+      "AppointmentSettingsRead": {
+        "properties": {
+          "slot_minutes": {
+            "type": "integer",
+            "title": "Slot Minutes"
+          },
+          "hours": {
+            "items": {
+              "$ref": "#/components/schemas/DayHours-Output"
+            },
+            "type": "array",
+            "title": "Hours"
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot_minutes",
+          "hours",
+          "is_default"
+        ],
+        "title": "AppointmentSettingsRead",
+        "description": "`GET /appointment-settings`: the slot length and seven days of hours, Monday first."
+      },
+      "AppointmentSettingsSaved": {
+        "properties": {
+          "slot_minutes": {
+            "type": "integer",
+            "title": "Slot Minutes"
+          },
+          "hours": {
+            "items": {
+              "$ref": "#/components/schemas/DayHours-Output"
+            },
+            "type": "array",
+            "title": "Hours"
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default"
+          },
+          "bookings_outside_hours": {
+            "type": "integer",
+            "title": "Bookings Outside Hours"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot_minutes",
+          "hours",
+          "is_default",
+          "bookings_outside_hours"
+        ],
+        "title": "AppointmentSettingsSaved",
+        "description": "`PUT /appointment-settings`: the saved settings, and how many upcoming live bookings now fall\noutside the hours. Those bookings are kept; the count lets the screen say so."
+      },
+      "AppointmentSettingsUpdate": {
+        "properties": {
+          "slot_minutes": {
+            "type": "integer",
+            "enum": [
+              10,
+              15,
+              20,
+              30,
+              60
+            ],
+            "title": "Slot Minutes"
+          },
+          "hours": {
+            "items": {
+              "$ref": "#/components/schemas/DayHours-Input"
+            },
+            "type": "array",
+            "maxItems": 7,
+            "minItems": 7,
+            "title": "Hours"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "slot_minutes",
+          "hours"
+        ],
+        "title": "AppointmentSettingsUpdate",
+        "description": "`PUT /appointment-settings`. Strict; every rule is a `422` naming the day it is about."
+      },
+      "AppointmentStatusUpdate": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "BOOKED",
+              "CONFIRMED",
+              "ARRIVED",
+              "COMPLETED",
+              "CANCELLED",
+              "NO_SHOW"
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "AppointmentStatusUpdate",
+        "description": "`POST /appointments/{id}/status`."
+      },
+      "AuditEventRead": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Event Id"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          },
+          "actor_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "actor_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Role"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "resource_type": {
+            "type": "string",
+            "title": "Resource Type"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          },
+          "result": {
+            "type": "string",
+            "title": "Result"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "source_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ip"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation Id"
+          },
+          "prev_hash": {
+            "type": "string",
+            "title": "Prev Hash"
+          },
+          "hash": {
+            "type": "string",
+            "title": "Hash"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "timestamp",
+          "action",
+          "resource_type",
+          "result",
+          "request_id",
+          "prev_hash",
+          "hash"
+        ],
+        "title": "AuditEventRead",
+        "description": "One audit event as the API returns it \u2014 the design's envelope, and nothing else.\n\n`tenant_id` is not declared: the caller already knows its own tenant, and the row was read under\nit. `prev_hash` and `hash` are exposed because verifying the trail is the point of reading it."
+      },
+      "AuditEventsPublic": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AuditEventRead"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Count"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "AuditEventsPublic",
+        "description": "A keyset page of audit events.\n\n`next_cursor` is opaque and `None` on the last page. `count` is the number of rows in this page,\nnot the tenant's total: the total is not disclosed and is not knowable without a scan, which R12\nrefuses."
+      },
+      "Body_login-login_access_token": {
+        "properties": {
+          "grant_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^password$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grant Type"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "title": "Password"
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope",
+            "default": ""
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "format": "password",
+            "title": "Client Secret"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "Body_login-login_access_token"
+      },
+      "ContactCreate": {
+        "properties": {
+          "given_name": {
+            "type": "string",
+            "pattern": "^[^\\x00-\\x1f\\x7f<>]{1,100}$",
+            "title": "Given Name"
+          },
+          "family_name": {
+            "type": "string",
+            "pattern": "^[^\\x00-\\x1f\\x7f<>]{0,100}$",
+            "title": "Family Name",
+            "default": ""
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Tags"
+          },
+          "external_ids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "maxProperties": 10,
+            "title": "External Ids"
+          },
+          "whatsapp_opt_in": {
+            "type": "boolean",
+            "title": "Whatsapp Opt In",
+            "default": false
+          },
+          "opt_in_source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "MANUAL",
+                  "WEB_FORM",
+                  "BOOKING",
+                  "WHATSAPP",
+                  "IMPORT",
+                  "CONNECTOR"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opt In Source"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "given_name"
+        ],
+        "title": "ContactCreate"
+      },
+      "ContactOptIn": {
+        "properties": {
+          "whatsapp_opt_in": {
+            "type": "boolean",
+            "title": "Whatsapp Opt In"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "MANUAL",
+              "WEB_FORM",
+              "BOOKING",
+              "WHATSAPP",
+              "IMPORT",
+              "CONNECTOR"
+            ],
+            "title": "Source"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "whatsapp_opt_in",
+          "source"
+        ],
+        "title": "ContactOptIn",
+        "description": "`POST /contacts/{id}/opt-in`: record a WhatsApp opt-in or opt-out, and how it was given."
+      },
+      "ContactRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "given_name": {
+            "type": "string",
+            "title": "Given Name"
+          },
+          "family_name": {
+            "type": "string",
+            "title": "Family Name"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "whatsapp_opt_in": {
+            "type": "boolean",
+            "title": "Whatsapp Opt In"
+          },
+          "opt_in_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opt In At"
+          },
+          "opt_in_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opt In Source"
+          },
+          "receives_communications": {
+            "type": "boolean",
+            "title": "Receives Communications"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "external_ids": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "External Ids"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "BLOCKED",
+              "ARCHIVED"
+            ],
+            "title": "Status"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "given_name",
+          "family_name",
+          "display_name",
+          "email",
+          "phone",
+          "whatsapp_opt_in",
+          "opt_in_at",
+          "opt_in_source",
+          "receives_communications",
+          "tags",
+          "external_ids",
+          "status",
+          "timezone",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ContactRead"
+      },
+      "ContactSearch": {
+        "properties": {
+          "q": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Q"
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "default": 50
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "q"
+        ],
+        "title": "ContactSearch",
+        "description": "`POST /contacts/search`. A body, not a URL, so a name or number never lands in a log line."
+      },
+      "ContactStatusChange": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "BLOCKED",
+              "ARCHIVED"
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "ContactStatusChange"
+      },
+      "ContactUpdate": {
+        "properties": {
+          "given_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[^\\x00-\\x1f\\x7f<>]{1,100}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Given Name"
+          },
+          "family_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[^\\x00-\\x1f\\x7f<>]{0,100}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Family Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "external_ids": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object",
+                "maxProperties": 10
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Ids"
+          },
+          "receives_communications": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receives Communications"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ContactUpdate"
+      },
+      "ContactsPublic": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ContactRead"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "ContactsPublic"
+      },
+      "DayHours-Input": {
+        "properties": {
+          "weekday": {
+            "type": "integer",
+            "maximum": 7.0,
+            "minimum": 1.0,
+            "title": "Weekday",
+            "description": "ISO weekday, Monday = 1"
+          },
+          "opens_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opens At"
+          },
+          "closes_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closes At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "weekday"
+        ],
+        "title": "DayHours",
+        "description": "One weekday's hours. Closed is both times `null`."
+      },
+      "DayHours-Output": {
+        "properties": {
+          "weekday": {
+            "type": "integer",
+            "maximum": 7.0,
+            "minimum": 1.0,
+            "title": "Weekday",
+            "description": "ISO weekday, Monday = 1"
+          },
+          "opens_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opens At"
+          },
+          "closes_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closes At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "weekday"
+        ],
+        "title": "DayHours",
+        "description": "One weekday's hours. Closed is both times `null`."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "InvitationAccept": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Token"
+          },
+          "new_password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "New Password"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "token",
+          "new_password"
+        ],
+        "title": "InvitationAccept",
+        "description": "The body of `POST /api/v1/users/invitations/accept`: the emailed token and a new password.\n\nThe password bounds are the API's own (`UserRegister`, `NewPassword`): 8 to 128 characters."
+      },
+      "InvitationAccepted": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "InvitationAccepted",
+        "description": "The account the invitation belonged to, so the app can sign the person straight in."
+      },
+      "Message": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "Message"
+      },
+      "NewPassword": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "new_password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "New Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "new_password"
+        ],
+        "title": "NewPassword"
+      },
+      "NotificationRunReport": {
+        "properties": {
+          "sent": {
+            "type": "integer",
+            "title": "Sent",
+            "default": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped",
+            "default": 0
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "default": 0
+          },
+          "retried": {
+            "type": "integer",
+            "title": "Retried",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "NotificationRunReport",
+        "description": "What one run of the booking-email job did, in counts only."
+      },
+      "OrganisationSignup": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 255,
+            "format": "email",
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Password"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "workspace_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "OrganisationSignup",
+        "description": "The body of `POST /api/v1/users/signup` (D-008). Strict: any other key is `422`.\n\nThe field rules are the ones `UserRegister` had (password 8 to 128 characters, the rest at most\n255). `workspace_name` registers an organisation; without it the account belongs to none, which is\nwhat a platform administrator registers."
+      },
+      "OwnPermissionsRead": {
+        "properties": {
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Permissions"
+          },
+          "role_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Role Codes",
+            "default": []
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "permissions"
+        ],
+        "title": "OwnPermissionsRead",
+        "description": "The caller's own effective permission codes, sorted (`GET /api/v1/users/me/permissions`).\n\nAdvisory UI data: the shell reads it to hide controls a role cannot use. It is the design's\nself-permissions row (`03-design.md`, \"Endpoints\": *\"advisory UI data only; never a\ncontrol\"*). Every route still re-authorises\nserver-side (INV-3). No user or tenant identifier is echoed back: the caller is the session."
+      },
+      "PermissionRead": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "code",
+          "description"
+        ],
+        "title": "PermissionRead",
+        "description": "One entry of the global permission catalogue.\n\n`permissions.id` is not exposed: `code` is the catalogue's stable identity and the join key is\ninternal. `permissions` is global read-only reference data (R7)."
+      },
+      "PermissionsPublic": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionRead"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "PermissionsPublic",
+        "description": "The permission catalogue, or a computed subset of it, plus its size."
+      },
+      "PracticeSettingsRead": {
+        "properties": {
+          "retention_years": {
+            "type": "integer",
+            "title": "Retention Years"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "retention_years",
+          "updated_at"
+        ],
+        "title": "PracticeSettingsRead"
+      },
+      "PracticeSettingsUpdate": {
+        "properties": {
+          "retention_years": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Retention Years"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "retention_years"
+        ],
+        "title": "PracticeSettingsUpdate",
+        "description": "Unknown fields are refused (a `tenant_id` included)."
+      },
+      "PractitionerRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "role": {
+            "type": "string",
+            "const": "STAFF",
+            "title": "Role"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "role",
+          "title"
+        ],
+        "title": "PractitionerRead",
+        "description": "A bookable member of staff: an active account holding a Doctor, Authorised Prescriber or\nNurse role in the session's organisation."
+      },
+      "PublicBookingCreated": {
+        "properties": {
+          "reference": {
+            "type": "string",
+            "title": "Reference"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reference"
+        ],
+        "title": "PublicBookingCreated",
+        "description": "The confirmation. The same shape whether the contact was new or matched (never says which)."
+      },
+      "PublicBookingRequest": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "SHORT",
+              "STANDARD",
+              "EXTENDED"
+            ],
+            "title": "Type"
+          },
+          "practitioner_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Practitioner Id"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "given_name": {
+            "type": "string",
+            "pattern": "^[^\\x00-\\x1f\\x7f<>]{1,100}$",
+            "title": "Given Name"
+          },
+          "family_name": {
+            "type": "string",
+            "pattern": "^[^\\x00-\\x1f\\x7f<>]{1,100}$",
+            "title": "Family Name"
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 255,
+            "format": "email",
+            "title": "Email"
+          },
+          "phone": {
+            "type": "string",
+            "maxLength": 32,
+            "pattern": "^\\+?[0-9 ().-]{8,24}$",
+            "title": "Phone"
+          },
+          "consent": {
+            "type": "boolean",
+            "const": true,
+            "title": "Consent"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "practitioner_id",
+          "starts_at",
+          "given_name",
+          "family_name",
+          "email",
+          "phone",
+          "consent"
+        ],
+        "title": "PublicBookingRequest",
+        "description": "`POST /public/{workspace_slug}/bookings`: a slot, who the contact is, and the APP 5 consent."
+      },
+      "PublicSlot": {
+        "properties": {
+          "practitioner_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Practitioner Id"
+          },
+          "practitioner_name": {
+            "type": "string",
+            "title": "Practitioner Name"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ends At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "practitioner_id",
+          "practitioner_name",
+          "starts_at",
+          "ends_at"
+        ],
+        "title": "PublicSlot",
+        "description": "One free, bookable time. Only what the booking page shows: never another contact's data."
+      },
+      "PublicWorkspaceRead": {
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "display_name"
+        ],
+        "title": "PublicWorkspaceRead",
+        "description": "`GET /api/v1/public/{workspace_slug}`: all an unauthenticated visitor learns about a clinic."
+      },
+      "RoleAssignmentCreate": {
+        "properties": {
+          "role_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Role Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "role_id"
+        ],
+        "title": "RoleAssignmentCreate",
+        "description": "The body of `POST /api/v1/users/{user_id}/roles`.\n\nOnly `role_id` is accepted. A `tenant_id` (INV-1), a `granted_by` or a `user_id` is an unknown\nfield and is rejected `422` before any query runs \u2014 the design's step 5 names exactly those three."
+      },
+      "RoleRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "is_system": {
+            "type": "boolean",
+            "title": "Is System"
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionRead"
+            },
+            "type": "array",
+            "title": "Permissions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "code",
+          "name",
+          "is_system",
+          "permissions"
+        ],
+        "title": "RoleRead",
+        "description": "A tenant-scoped role and the permission bundle it resolves to."
+      },
+      "RolesPublic": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/RoleRead"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "RolesPublic",
+        "description": "The organisation's roles, ordered by code, plus their count."
+      },
+      "SetupRead": {
+        "properties": {
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/SetupStep"
+            },
+            "type": "array",
+            "title": "Steps"
+          },
+          "required_done": {
+            "type": "integer",
+            "title": "Required Done"
+          },
+          "required_total": {
+            "type": "integer",
+            "title": "Required Total"
+          },
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          }
+        },
+        "type": "object",
+        "required": [
+          "steps",
+          "required_done",
+          "required_total",
+          "ready"
+        ],
+        "title": "SetupRead",
+        "description": "The setup checklist (R1-R3), every step derived from live data."
+      },
+      "SetupStep": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "workspace_name",
+              "hours",
+              "team_invited",
+              "settings",
+              "permissions_reviewed",
+              "booking_page",
+              "integrations"
+            ],
+            "title": "Key"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "done",
+              "todo",
+              "optional",
+              "informational"
+            ],
+            "title": "Status"
+          },
+          "required": {
+            "type": "boolean",
+            "title": "Required"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "status",
+          "required"
+        ],
+        "title": "SetupStep"
+      },
+      "SignupAccepted": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "expires_in_hours": {
+            "type": "integer",
+            "title": "Expires In Hours"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "expires_in_hours"
+        ],
+        "title": "SignupAccepted",
+        "description": "The one answer to a signup, whatever the address: this attempt's id and the link's window.\n\n`request_id` identifies the attempt (for \"Send the email again\"), never an account."
+      },
+      "SignupResend": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id"
+        ],
+        "title": "SignupResend",
+        "description": "The body of `POST /api/v1/users/signup/resend`."
+      },
+      "SignupVerify": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Token"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "SignupVerify",
+        "description": "The body of `POST /api/v1/users/signup/verify`: the emailed token, only ever in a body."
+      },
+      "StaffInvitationRead": {
+        "properties": {
+          "sent_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Sent At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "expired": {
+            "type": "boolean",
+            "title": "Expired"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sent_at",
+          "expires_at",
+          "expired"
+        ],
+        "title": "StaffInvitationRead",
+        "description": "An outstanding invitation: when the current link was sent and when it stops working.\n\n`expired` is decided by the server's clock, so a screen never has to trust the device's."
+      },
+      "StaffInvite": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 255,
+            "format": "email",
+            "title": "Email"
+          },
+          "full_name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Full Name"
+          },
+          "role_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 7,
+            "minItems": 1,
+            "title": "Role Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "email",
+          "full_name",
+          "role_ids"
+        ],
+        "title": "StaffInvite",
+        "description": "The body of `POST /api/v1/users/staff`: who to invite and the role(s) they start with.\n\nStrict (`extra=\"forbid\"`) for every key but one. **A `tenant_id` is ignored and audited** rather\nthan refused (INV-1: *\"a `tenant_id` from a body, header or query parameter is ignored and audited\nas a cross-tenant attempt\"*): the wrap validator drops it before validation and records that it\nwas there, and the service writes the audit event in the invitation's own transaction. The\ninvitation always lands in the session's tenant. There is no password field: the invitee\nchooses their own through the emailed link."
+      },
+      "StaffMemberRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "INVITED",
+              "ACTIVE",
+              "INACTIVE"
+            ],
+            "title": "Status"
+          },
+          "invitation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StaffInvitationRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "roles": {
+            "items": {
+              "$ref": "#/components/schemas/StaffRoleRead"
+            },
+            "type": "array",
+            "title": "Roles"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "full_name",
+          "is_active",
+          "status",
+          "invitation",
+          "created_at",
+          "roles"
+        ],
+        "title": "StaffMemberRead",
+        "description": "One account of the caller's organisation (`GET`/`POST /api/v1/users/staff`).\n\nNo `tenant_id` (the caller's own), no `is_superuser` (a platform attribute an organisation does\nnot administer) and no credential material. `invitation` is present only while the status is\n`INVITED`."
+      },
+      "StaffPublic": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/StaffMemberRead"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "StaffPublic",
+        "description": "One page of the organisation's staff, plus the organisation's total."
+      },
+      "StaffRoleRead": {
+        "properties": {
+          "role_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Role Id"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "role_id",
+          "code",
+          "name"
+        ],
+        "title": "StaffRoleRead",
+        "description": "One role a staff member holds: enough to show and to address it, not its bundle."
+      },
+      "StepUpGrantRead": {
+        "properties": {
+          "step_up_token": {
+            "type": "string",
+            "title": "Step Up Token"
+          },
+          "operation": {
+            "type": "string",
+            "title": "Operation"
+          },
+          "resource_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Resource Id"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "step_up_token",
+          "operation",
+          "resource_id",
+          "expires_at"
+        ],
+        "title": "StepUpGrantRead",
+        "description": "The single-use proof. `step_up_token` is SECRET: held by the client for one call, never logged."
+      },
+      "StepUpRequest": {
+        "properties": {
+          "password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Password"
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "contact.export",
+              "integration.disconnect"
+            ],
+            "title": "Operation"
+          },
+          "resource_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Resource Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "password",
+          "operation",
+          "resource_id"
+        ],
+        "title": "StepUpRequest",
+        "description": "`POST /api/v1/auth/step-up`: re-prove the session's factor for one operation on one resource.\n\nThe interim factor is the account password (ADR-F002; D-003 decides the real one). `operation`\nis a closed vocabulary and `resource_id` is the record the operation will act on, so the grant\nthis returns cannot be spent on anything else. No `user_id` or `tenant_id`: both are the session."
+      },
+      "TenantCurrentRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "data_region": {
+            "type": "string",
+            "title": "Data Region"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "status",
+          "data_region",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "TenantCurrentRead",
+        "description": "The caller's own tenant, as `GET /api/v1/workspaces/current` returns it.\n\n`status` and `data_region` are shown (US-1). `retention_profile` and `legal_name` are not: the\napplication role holds no `SELECT` on either (`03-design.md`, \"Database privileges\")."
+      },
+      "TenantProfileRead": {
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "display_name"
+        ],
+        "title": "TenantProfileRead",
+        "description": "The caller's own clinic as every member of it may see it: the PUBLIC display name only."
+      },
+      "TenantProfileUpdate": {
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Display Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "display_name"
+        ],
+        "title": "TenantProfileUpdate",
+        "description": "The body of `PATCH /api/v1/workspaces/current/profile`.\n\nStrict (`extra=\"forbid\"`): any unknown key is a `422`. The one exception is `tenant_id`, which\nINV-1 says is **ignored and audited** rather than refused: it is dropped before validation and the\nservice records the attempt on the change's own transaction."
+      },
+      "TenantSettingsUpdate": {
+        "properties": {},
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TenantSettingsUpdate",
+        "description": "The body of `PATCH /api/v1/workspaces/current` \u2014 no field is settable yet.\n\n`extra=\"forbid\"` is what makes that a control rather than a comment: a client cannot smuggle a\n`tenant_id` (or any future setting) past the route, and any name it sends is a `422` decided by the\nvalidation layer, in the same order the design fixes (validate against a strict schema)."
+      },
+      "Token": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          },
+          "token_type": {
+            "type": "string",
+            "title": "Token Type",
+            "default": "bearer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token"
+        ],
+        "title": "Token"
+      },
+      "UpdatePassword": {
+        "properties": {
+          "current_password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Current Password"
+          },
+          "new_password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "New Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "title": "UpdatePassword"
+      },
+      "UserCreate": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 255,
+            "format": "email",
+            "title": "Email"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          },
+          "is_superuser": {
+            "type": "boolean",
+            "title": "Is Superuser",
+            "default": false
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "UserCreate"
+      },
+      "UserPermissionsRead": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionRead"
+            },
+            "type": "array",
+            "title": "Permissions"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "user_id",
+          "permissions",
+          "count"
+        ],
+        "title": "UserPermissionsRead",
+        "description": "The effective permission set of one account, computed server-side from its roles.\n\nThe design names this \"effective set, computed server-side\": nothing here comes from the request,\nand the set is the union of the account's role bundles (R1)."
+      },
+      "UserPublic": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 255,
+            "format": "email",
+            "title": "Email"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          },
+          "is_superuser": {
+            "type": "boolean",
+            "title": "Is Superuser",
+            "default": false
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "id"
+        ],
+        "title": "UserPublic"
+      },
+      "UserRoleRead": {
+        "properties": {
+          "role_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Role Id"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "is_system": {
+            "type": "boolean",
+            "title": "Is System"
+          },
+          "granted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Granted At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "role_id",
+          "code",
+          "name",
+          "is_system",
+          "granted_at"
+        ],
+        "title": "UserRoleRead",
+        "description": "One role an account holds inside the caller's tenant.\n\n`granted_at` is returned because an access review needs the age of the grant (US-2); the granter's\nidentifier is not."
+      },
+      "UserRolesPublic": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/UserRoleRead"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "UserRolesPublic",
+        "description": "The roles one account holds, plus their count."
+      },
+      "UserUpdate": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "is_superuser": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Superuser"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 8
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "title": "UserUpdate"
+      },
+      "UserUpdateMe": {
+        "properties": {
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          }
+        },
+        "type": "object",
+        "title": "UserUpdateMe"
+      },
+      "UsersPublic": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/UserPublic"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "UsersPublic"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "OAuth2PasswordBearer": {
+        "type": "oauth2",
+        "flows": {
+          "password": {
+            "scopes": {},
+            "tokenUrl": "/api/v1/login/access-token"
+          }
+        }
+      }
+    }
+  }
+}

@@ -28,7 +28,7 @@ from sqlmodel import SQLModel
 
 # PRIVATE API, deliberately. SQLModel annotates `model_config` as `SQLModelConfig`, so a plain
 # `ConfigDict` is rejected by BOTH mypy --strict and ty; this is the only spelling that satisfies
-# both, and it is the same import `app/modules/patients/schemas.py` already carries.
+# both, and it is the same import `app/modules/users_roles/schemas.py` carries.
 from sqlmodel._compat import SQLModelConfig
 
 # R12: the page size defaults to 50 and the hard maximum is 200. A client may ask for less and never

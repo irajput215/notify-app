@@ -1,34 +1,32 @@
-"""Practice settings and setup checklist shapes (docs3 feature 01)."""
+"""Workspace settings and setup checklist shapes."""
 
 from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.practice.models import MIN_ADULT_RETENTION_YEARS
+from app.modules.practice.models import MIN_RETENTION_YEARS
 
 
 class PracticeSettingsRead(BaseModel):
-    adult_retention_years: int
+    retention_years: int
     #: `None` until the settings were first saved (the setup step stays undone).
     updated_at: datetime | None
 
 
 class PracticeSettingsUpdate(BaseModel):
-    """Unknown fields are refused (a `tenant_id` or the retired `draft_staging_roles` included)."""
+    """Unknown fields are refused (a `tenant_id` included)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    adult_retention_years: int = Field(ge=MIN_ADULT_RETENTION_YEARS, le=100)
+    retention_years: int = Field(ge=MIN_RETENTION_YEARS, le=100)
 
 
 StepKey = Literal[
-    "clinic_name",
+    "workspace_name",
     "hours",
     "team_invited",
-    "prescriber_ready",
-    "workflow",
-    "consents",
+    "settings",
     "permissions_reviewed",
     "booking_page",
     "integrations",

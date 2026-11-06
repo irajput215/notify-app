@@ -19,7 +19,7 @@ Requirement `INV-5` (`docs/reference/build-contract.md` §5) and feature
 
 Two honest limits are recorded here rather than hidden:
 
-- Redaction by pattern cannot recognise a patient *name* embedded in free text, because a name
+- Redaction by pattern cannot recognise a person's *name* embedded in free text, because a name
   has no shape. Names are caught when they arrive as a typed field (`given_name`, `patient_name`,
   …), which is why the contract requires typed fields and forbids free-text concatenation; a
   call site that interpolates a name into the message defeats the filter. The typed-field rule is
@@ -201,7 +201,7 @@ def pseudonymise(value: UUID | str, *, prefix: str) -> str:
 # --- Redaction ---------------------------------------------------------------------------------
 
 #: A field whose *name* contains any of these tokens is redacted whatever it holds. Tokens are
-#: matched against the `_`/`-`/`.`-separated parts of a key, so `patient_email` is caught and
+#: matched against the `_`/`-`/`.`-separated parts of a key, so `contact_email` is caught and
 #: `email_template` is caught too — over-redaction is the safe direction.
 _SENSITIVE_KEY_TOKENS: Final[frozenset[str]] = frozenset(
     {
@@ -229,7 +229,7 @@ _SENSITIVE_KEY_TOKENS: Final[frozenset[str]] = frozenset(
         "otp",
         "seed",
         "signature",
-        # HEALTH_INFORMATION: direct identifiers and health identifiers.
+        # Personal information: direct identifiers and contact details.
         "name",
         "names",
         "surname",
@@ -249,6 +249,26 @@ _SENSITIVE_KEY_TOKENS: Final[frozenset[str]] = frozenset(
         "contact",
         "patient",
         "subject",
+        "wa_id",
+        "whatsapp",
+        "e164",
+        "msisdn",
+        "recipient",
+        "sender",
+        # Messaging: message text and media are customer content and never reach a log.
+        "message",
+        "messages",
+        "text",
+        "caption",
+        "media",
+        "template",
+        "transcript",
+        "prompt",
+        "completion",
+        # Connector credentials.
+        "access_token",
+        "cliniko",
+        "meta",
         # HIGHLY_SENSITIVE: bodies and clinical payloads are prohibited from every sink.
         "body",
         "payload",
@@ -259,8 +279,6 @@ _SENSITIVE_KEY_TOKENS: Final[frozenset[str]] = frozenset(
         "notes",
         "document",
         "ocr",
-        "prescription",
-        "tga",
         "approval",
         "clinical",
         "diagnosis",
@@ -306,7 +324,18 @@ _VALUE_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
         re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{6,}"),
         rf"\1 {REDACTED}",
     ),
-    # A Medicare number: ten digits, optionally grouped 4-5-1.
+    # A Meta (Facebook Graph) access token.
+    (re.compile(r"\bEAA[A-Za-z0-9]{20,}\b"), REDACTED),
+    # A Cliniko API key (base64, with its region shard suffix).
+    (re.compile(r"\bMS0[A-Za-z0-9+/=]{16,}(?:-[a-z]{2}\d)?\b"), REDACTED),
+    # A phone number in E.164 or international form, spaces and dashes allowed: `+61 412 345 678`.
+    (re.compile(r"(?<![\w+])\+\d[\d\s-]{6,17}\d(?!\d)"), REDACTED),
+    # A national phone number with a trunk zero, grouped: `0412 345 678`, `(02) 9876 5432`.
+    (
+        re.compile(r"(?<!\d)\(?0\d\)?[\s-]?\d{2,4}[\s-]\d{3,4}(?:[\s-]\d{3})?(?!\d)"),
+        REDACTED,
+    ),
+    # A Medicare number: ten digits, optionally grouped 4-5-1. Also catches a ten-digit phone number.
     (re.compile(r"(?<!\d)\d{4}\s\d{5}\s\d(?!\d)"), REDACTED),
     (re.compile(r"(?<!\d)\d{10}(?!\d)"), REDACTED),
     # An IHI: sixteen digits.
@@ -416,7 +445,7 @@ class EnvelopeFilter(logging.Filter):
 
 #: Set on a record the envelope validator has already dropped, so N handlers count one line once.
 #: The leading underscore keeps it out of the JSON line (see `JSONFormatter.format`).
-_DROP_MARKER: Final = "_clinos_envelope_dropped"
+_DROP_MARKER: Final = "_notify_envelope_dropped"
 
 
 _envelope_drops = 0

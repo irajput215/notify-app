@@ -45,7 +45,7 @@ from app.modules.identity_tenancy.models import DISPLAY_NAME_MAX_LENGTH
 
 
 class TenantCurrentRead(SQLModel):
-    """The caller's own tenant, as `GET /api/v1/tenants/current` returns it.
+    """The caller's own tenant, as `GET /api/v1/workspaces/current` returns it.
 
     `status` and `data_region` are shown (US-1). `retention_profile` and `legal_name` are not: the
     application role holds no `SELECT` on either (`03-design.md`, "Database privileges").
@@ -62,7 +62,7 @@ class TenantCurrentRead(SQLModel):
 
 
 class TenantSettingsUpdate(SQLModel):
-    """The body of `PATCH /api/v1/tenants/current` — no field is settable yet.
+    """The body of `PATCH /api/v1/workspaces/current` — no field is settable yet.
 
     `extra="forbid"` is what makes that a control rather than a comment: a client cannot smuggle a
     `tenant_id` (or any future setting) past the route, and any name it sends is a `422` decided by the
@@ -101,7 +101,7 @@ class TenantProfileRead(SQLModel):
 
 
 class TenantProfileUpdate(BaseModel):
-    """The body of `PATCH /api/v1/tenants/current/profile`.
+    """The body of `PATCH /api/v1/workspaces/current/profile`.
 
     Strict (`extra="forbid"`): any unknown key is a `422`. The one exception is `tenant_id`, which
     INV-1 says is **ignored and audited** rather than refused: it is dropped before validation and the
@@ -134,8 +134,8 @@ class TenantProfileUpdate(BaseModel):
         return self._client_tenant_id_supplied
 
 
-class PublicClinicRead(BaseModel):
-    """`GET /api/v1/public/{clinic_slug}`: all an unauthenticated visitor learns about a clinic."""
+class PublicWorkspaceRead(BaseModel):
+    """`GET /api/v1/public/{workspace_slug}`: all an unauthenticated visitor learns about a clinic."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -153,9 +153,7 @@ class StepUpRequest(SQLModel):
     model_config = SQLModelConfig(extra="forbid")
 
     password: str = Field(min_length=1, max_length=128)
-    operation: Literal[
-        "prescription.sign", "prescription.dispatch", "practitioner.identifier_update"
-    ]
+    operation: Literal["contact.export", "integration.disconnect"]
     resource_id: uuid.UUID
 
 

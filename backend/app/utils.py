@@ -69,7 +69,7 @@ def send_email(
 def deliver_email(*, email_to: str, subject: str, html_content: str) -> bool:
     """Send one email and say whether the server accepted it. Logs nothing.
 
-    For mail that goes to a patient (`app.modules.appointments.notifications`): the caller records
+    For mail that goes to a contact (`app.modules.appointments.notifications`): the caller records
     the outcome as a code, so neither the address nor the server's reply text (which can quote the
     address back) ever reaches a log line. A connection failure is `False`, never an exception.
     """
@@ -131,7 +131,7 @@ def generate_new_account_email(
 # with their own derived key, expiring, and bound to the password hash at issue, so a link sets a
 # password once and any later password change retires it.
 _RESET_LINK = PasswordBoundToken(
-    purpose="password-reset", key_label=b"clinicos/password-reset/v1"
+    purpose="password-reset", key_label=b"notify/password-reset/v1"
 )
 
 

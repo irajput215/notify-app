@@ -14,7 +14,7 @@ reads a no-op as success.
 ## Never twice
 
 1. **Claim** due `PENDING` rows `FOR UPDATE SKIP LOCKED` (two runs never take one row), decide on
-   the same transaction which to skip (a booking that is not live or has started, a patient with no
+   the same transaction which to skip (a booking that is not live or has started, a contact with no
    address: `SKIPPED` with a code) and mark the rest `SENDING`. Commit.
 2. **Send** each, outside any transaction.
 3. **Record** each outcome on a transaction of its own: `SENT`; or, for a refusal, back to `PENDING`
@@ -27,8 +27,8 @@ guarantee "never two reminders for one booking". A missed reminder is the accept
 
 ## What an email says, and what it never says
 
-The clinic's display name (PUBLIC), the date and time in Sydney, the reference and how to change it.
-Never the patient's name, the visit type, the practitioner or anything clinical; every value is
+The workspace's display name (PUBLIC), the date and time in Sydney, the reference and how to change it.
+Never the contact's name, the visit type, the practitioner or anything clinical; every value is
 HTML-escaped. Nothing about the recipient or the server's reply reaches a log line or the audit
 trail: the outcome is recorded as a code.
 """
@@ -51,8 +51,8 @@ from app.core.db import engine, tenant_transaction
 from app.modules.appointments.schemas import NotificationRunReport
 from app.modules.appointments.service import TIMEZONE, booking_reference
 from app.modules.audit import service as audit
+from app.modules.contacts import service as contacts
 from app.modules.identity_tenancy import service as identity_tenancy
-from app.modules.patients import service as patients
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ _CLAIM_SQL = text(
 # the database clock, so "has it started?" and the wording agree.
 _BOOKINGS_SQL = text(
     """
-    SELECT a.id, a.patient_id, a.status, a.starts_at > now() AS ahead,
+    SELECT a.id, a.contact_id, a.status, a.starts_at > now() AS ahead,
            to_char(a.starts_at AT TIME ZONE :zone, 'FMDay FMDD FMMonth YYYY') AS day,
            to_char(a.starts_at AT TIME ZONE :zone, 'FMHH12:MI am') AS time
     FROM appointments a
@@ -140,7 +140,7 @@ def render(
         subject = f"Your appointment with {clinic} is booked"
     context = {
         "project_name": settings.PROJECT_NAME,
-        "clinic": clinic,
+        "workspace": clinic,
         "heading": heading,
         "lead": lead,
         "preview": f"{day}, {time}. Reference {reference}.",
@@ -188,19 +188,18 @@ def _claim(
                 },
             )
         }
-        addresses = patients.contact_emails(
+        addresses = contacts.contact_emails(
             session,
             tenant_id=tenant_id,
-            patient_ids=[booking.patient_id for booking in bookings.values()],
+            contact_ids=[booking.contact_id for booking in bookings.values()],
         )
-        opted_out = patients.opted_out_ids(
+        opted_out = contacts.opted_out_ids(
             session,
             tenant_id=tenant_id,
-            patient_ids=[booking.patient_id for booking in bookings.values()],
+            contact_ids=[booking.contact_id for booking in bookings.values()],
         )
         clinic = (
-            identity_tenancy.tenant_display_name(session, tenant_id=tenant_id)
-            or "your clinic"
+            identity_tenancy.tenant_display_name(session, tenant_id=tenant_id) or "us"
         )
         emails: list[_Email] = []
         for notification_id, appointment_id_, notification_kind, attempts in claimed:
@@ -210,9 +209,9 @@ def _claim(
                 outcome = "BOOKING_NOT_LIVE"
             elif not booking.ahead:
                 outcome = "STARTED"
-            elif booking.patient_id not in addresses:
+            elif booking.contact_id not in addresses:
                 outcome = "NO_EMAIL"
-            elif notification_kind == "REMINDER" and booking.patient_id in opted_out:
+            elif notification_kind == "REMINDER" and booking.contact_id in opted_out:
                 outcome = "OPTED_OUT"
             if outcome is not None:
                 connection.execute(
@@ -233,7 +232,7 @@ def _claim(
                 _Email(
                     notification_id=notification_id,
                     attempts=attempts,
-                    to=addresses[booking.patient_id],
+                    to=addresses[booking.contact_id],
                     subject=subject,
                     html_content=html_content,
                 )

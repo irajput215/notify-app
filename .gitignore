@@ -6,12 +6,23 @@ node_modules/
 .env
 .env.*
 !.env.example
-backend/app/frontend/
-/test-results/
-/playwright-report/
-/blob-report/
-/playwright/.cache/
 
 # Credentials and local context
 creds.txt
 .neon
+
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/.env*.local
+*.tsbuildinfo
+next-env.d.ts
+
+# Python
+__pycache__/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage

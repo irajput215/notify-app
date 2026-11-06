@@ -1,15 +1,13 @@
 from fastapi import APIRouter
 
-# The whole model registry, so every foreign key a mapped table names resolves at runtime too: the
-# care-relationship upkeep inserts a row whose `clinic_id` references `clinics`, a table no route
-# module imports on its own.
+# The whole model registry, so every foreign key a mapped table names resolves at runtime too.
 import app.db_models  # noqa: F401
 from app.api.routes import health, login, users, utils
 from app.modules.appointments.router import (
-    internal_router as appointments_internal_router,
+    contact_router as appointments_contact_router,
 )
 from app.modules.appointments.router import (
-    patient_router as appointments_patient_router,
+    internal_router as appointments_internal_router,
 )
 from app.modules.appointments.router import (
     practitioners_router,
@@ -20,28 +18,13 @@ from app.modules.appointments.router import (
     settings_router as appointment_settings_router,
 )
 from app.modules.audit.router import router as audit_router
-from app.modules.care_relationships.router import router as care_relationships_router
-from app.modules.clinical_records.router import router as clinical_records_router
-from app.modules.dashboard.router import router as dashboard_router
+from app.modules.contacts.router import router as contacts_router
 from app.modules.identity_tenancy.router import auth_router
 from app.modules.identity_tenancy.router import router as tenants_router
-from app.modules.intake.router import (
-    patient_router as intake_patient_router,  # noqa: E402
-)
-from app.modules.intake.router import pharmacies_router  # noqa: E402
-from app.modules.intake.router import router as intake_router  # noqa: E402
-from app.modules.patients.router import router as patients_router
 from app.modules.practice.router import router as practice_router  # noqa: E402
-from app.modules.prescriptions.router import router as prescriptions_router
-from app.modules.sops.router import router as sops_router  # noqa: E402
-from app.modules.tga_approvals.router import (
-    patient_router as tga_patient_router,
-)
-from app.modules.tga_approvals.router import router as tga_approvals_router
 from app.modules.users_roles.router import (
     current_user_router,
     invitations_router,
-    onboarding_router,
     permissions_router,
     roles_router,
     signup_router,
@@ -59,7 +42,7 @@ api_router.include_router(signup_router)
 api_router.include_router(invitations_router)
 api_router.include_router(users.router)
 api_router.include_router(utils.router)
-api_router.include_router(patients_router)
+api_router.include_router(contacts_router)
 api_router.include_router(roles_router)
 api_router.include_router(permissions_router)
 # Before `user_roles_router`: `/users/me/permissions` must match before `/users/{user_id}/permissions`
@@ -68,31 +51,14 @@ api_router.include_router(current_user_router)
 api_router.include_router(user_roles_router)
 api_router.include_router(tenants_router)
 api_router.include_router(audit_router)
-api_router.include_router(clinical_records_router)
-# Feature 08. Two routers, and the second is the design's patient-scoped list path
-# (`GET /api/v1/patients/{patient_id}/tga-approvals`), which cannot live under the
-# `/tga-approvals` prefix. The patients router is another module's; a module owns its routes.
-api_router.include_router(tga_approvals_router)
-api_router.include_router(tga_patient_router)
 # Feature 04 (calendar and booking, docs2/sdlc/04). The last two are the unauthenticated public
 # booking routes: the tenant is resolved from the slug on the server, never from the client.
 api_router.include_router(practitioners_router)
 api_router.include_router(appointments_router)
-api_router.include_router(appointments_patient_router)
+api_router.include_router(appointments_contact_router)
 api_router.include_router(public_booking_router)
 # Milestone 4: the clinic hours and slot length, and the booking-email job a scheduler calls (D-009).
 api_router.include_router(appointment_settings_router)
 api_router.include_router(appointments_internal_router)
 api_router.include_router(auth_router)
-# Phase 2D: the script queue, the safety gate on sign and dispatch, and the outbox.
-api_router.include_router(prescriptions_router)
-# Phase 2E: the Today page, one read composed from the three modules above.
-api_router.include_router(dashboard_router)
-# T1-34 / D-007: a patient's care team, the interim upkeep of the treating-relationship rule.
-api_router.include_router(care_relationships_router)
-api_router.include_router(intake_router)
-api_router.include_router(intake_patient_router)
-api_router.include_router(pharmacies_router)
-api_router.include_router(onboarding_router)
-api_router.include_router(sops_router)
 api_router.include_router(practice_router)

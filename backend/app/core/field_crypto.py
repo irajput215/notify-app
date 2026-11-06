@@ -1,15 +1,15 @@
-"""Field-level encryption for identifiers, and the keyed blind index that finds them.
+"""Field-level encryption for sensitive values, and the keyed blind index that finds them.
 
-`docs/features/05-patients/01-requirements.md` R8: Medicare numbers and IHIs are encrypted at the
-application boundary, and exact-match search uses a keyed blind index, so the database never holds a
-searchable plaintext identifier. The same helper serves practitioner identifiers (docs3 feature 02).
+Contact phone numbers, Meta access tokens and Cliniko API keys are encrypted at the application
+boundary, and exact-match lookup uses a keyed blind index, so the database never holds a searchable
+plaintext value.
 
 - **Encryption** is AES-256-GCM. A stored value is `version (1 byte) || nonce (12) || ciphertext+tag`.
   The version names the key, so a later key can be introduced without re-reading old rows first.
   The associated data binds a value to its tenant and its column (`kind`): a ciphertext copied into
   another tenant's row, or into another column, fails to decrypt instead of reading as valid.
 - **The blind index** is HMAC-SHA256 over the tenant, the kind and the normalised value. Scoping it by
-  tenant means two clinics' rows for the same person cannot be linked by comparing indexes.
+  tenant means two workspaces' rows for the same person cannot be linked by comparing indexes.
 - **Keys** come from `FIELD_ENCRYPTION_KEY` (32 bytes, base64url) or, when unset, are derived from
   `SECRET_KEY`. Two separate keys are derived with HKDF, one per purpose, so the index key can never
   decrypt anything.
@@ -51,7 +51,7 @@ def _master_key() -> bytes:
             raise ValueError("FIELD_ENCRYPTION_KEY must be 32 bytes, base64url-encoded")
         return key
     return hashlib.sha256(
-        b"clinicos/field-crypto/v1|" + settings.SECRET_KEY.encode()
+        b"notify/field-crypto/v1|" + settings.SECRET_KEY.encode()
     ).digest()
 
 
@@ -61,7 +61,7 @@ def _derived(purpose: bytes) -> bytes:
         algorithm=hashes.SHA256(),
         length=_KEY_BYTES,
         salt=None,
-        info=b"clinicos/" + purpose + b"/v1",
+        info=b"notify/" + purpose + b"/v1",
     ).derive(_master_key())
 
 
@@ -106,7 +106,7 @@ def blind_index(value: str, *, tenant_id: uuid.UUID, kind: str) -> bytes:
 
 
 def mask(value: str | None) -> str | None:
-    """`•••• ` and the last three characters (`05-patients` R9); never more of the value."""
+    """`•••• ` and the last three characters; never more of the value."""
     if not value:
         return None
     return "•••• " + value[-3:]

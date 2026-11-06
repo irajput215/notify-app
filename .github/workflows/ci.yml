@@ -1,0 +1,85 @@
+# One lean workflow: backend lint, types, migrations and tests; frontend lint and build.
+# ClinicOS's other workflows (Playwright, coverage, security scanning, deploy, release housekeeping)
+# were left behind to keep CI fast; bring them back from irajput215/clinic-os when needed.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d app"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      FASTAPI_ENV: development
+      PROJECT_NAME: Notify
+      SECRET_KEY: ci-only-secret-key-that-is-at-least-32-bytes-long
+      FIRST_SUPERUSER: admin@example.com
+      FIRST_SUPERUSER_PASSWORD: ci-only-password
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app
+      SMTP_HOST: localhost
+      EMAILS_FROM_EMAIL: info@example.com
+      SMTP_TLS: "false"
+      SMTP_PORT: "1025"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Lint and types
+        run: |
+          uv run ruff check backend
+          uv run ruff format --check backend
+          uv run mypy backend/app
+      - name: Migrate an empty database
+        working-directory: backend
+        run: uv run alembic upgrade head
+      - name: Models and migrations agree
+        working-directory: backend
+        run: uv run alembic check
+      - name: Tests
+        working-directory: backend
+        run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build

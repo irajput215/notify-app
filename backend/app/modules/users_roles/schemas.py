@@ -14,13 +14,13 @@ not needed is exposed. `user_roles.granted_by` is SENSITIVE and is deliberately 
 an administrator needs the role and when it was granted, not the granter's identifier. `id` on a
 permission is internal join-key material and is not exposed; `code` is the catalogue's stable identity.
 
-`SQLModelConfig` is imported from `sqlmodel._compat` for the same reason the patients schemas do it:
+`SQLModelConfig` is imported from `sqlmodel._compat` for the reason given in the module docstring:
 SQLModel annotates `model_config` as its own type, so a plain `ConfigDict` is rejected by both
 `mypy --strict` and `ty`.
 """
 
 import uuid
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import EmailStr, ModelWrapValidatorHandler, PrivateAttr, model_validator
@@ -130,10 +130,7 @@ class OwnPermissionsRead(SQLModel):
     model_config = SQLModelConfig(extra="forbid")
 
     permissions: list[str]
-    #: The held codes that reach a patient only through an active care relationship (the matrix's
-    #: `cr` grants, T1-34): the screen explains a refusal and hides the care-team controls with it.
-    relationship_bound: list[str] = []
-    #: The caller's own role codes (docs3 feature 02): the "first hour" card picks its lines by role.
+    #: The caller's own role codes: the screen picks what to show by role.
     role_codes: list[str] = []
 
 
@@ -165,9 +162,6 @@ class StaffInvitationRead(SQLModel):
 StaffStatus = Literal["INVITED", "ACTIVE", "INACTIVE"]
 
 
-OnboardingStatus = Literal["INVITED", "INACTIVE", "ACTIVE", "PACK_INCOMPLETE", "READY"]
-
-
 class StaffMemberRead(SQLModel):
     """One account of the caller's organisation (`GET`/`POST /api/v1/users/staff`).
 
@@ -186,9 +180,6 @@ class StaffMemberRead(SQLModel):
     invitation: StaffInvitationRead | None
     created_at: datetime | None
     roles: list[StaffRoleRead]
-    #: Where onboarding stands (docs3 feature 02, R2): the account status, or for an active
-    #: prescriber whether the pack is complete (`READY`) or not (`PACK_INCOMPLETE`).
-    onboarding_status: OnboardingStatus = "ACTIVE"
 
 
 class StaffPublic(SQLModel):
@@ -259,7 +250,7 @@ class OrganisationSignup(SQLModel):
     """The body of `POST /api/v1/users/signup` (D-008). Strict: any other key is `422`.
 
     The field rules are the ones `UserRegister` had (password 8 to 128 characters, the rest at most
-    255). `clinic_name` registers an organisation; without it the account belongs to none, which is
+    255). `workspace_name` registers an organisation; without it the account belongs to none, which is
     what a platform administrator registers.
     """
 
@@ -268,7 +259,7 @@ class OrganisationSignup(SQLModel):
     email: EmailStr = Field(max_length=255)
     password: str = Field(min_length=8, max_length=128)
     full_name: str | None = Field(default=None, max_length=255)
-    clinic_name: str | None = Field(default=None, max_length=255)
+    workspace_name: str | None = Field(default=None, max_length=255)
 
 
 class SignupAccepted(SQLModel):
@@ -297,79 +288,3 @@ class SignupVerify(SQLModel):
     model_config = SQLModelConfig(extra="forbid")
 
     token: str = Field(min_length=1, max_length=2048)
-
-
-# -- docs3 feature 02: the onboarding pack ----------------------------------------------------------
-
-IdentifierKind = Literal["AHPRA", "HPI_I", "PRESCRIBER_NUMBER", "PROVIDER_NUMBER"]
-#: `MISSING` (no row yet) and `EXPIRING` / `EXPIRED` are derived at read time.
-IdentifierState = Literal["MISSING", "PENDING", "ACTIVE", "EXPIRING", "EXPIRED"]
-
-
-class IdentifierRead(SQLModel):
-    """One vault entry, masked. The value itself never leaves the server."""
-
-    kind: IdentifierKind
-    label: str
-    required: bool
-    state: IdentifierState
-    masked: str | None
-    expires_on: date | None
-    verified_by_name: str | None
-    verified_at: datetime | None
-    verification_method: str | None
-
-
-class AgreementRead(SQLModel):
-    agreement_version: str
-    signed_on: date
-    attested_by_name: str | None
-    attested_at: datetime
-
-
-class PackSopRead(SQLModel):
-    id: uuid.UUID
-    title: str
-    current_version: int
-    acknowledged_version: int | None
-
-
-class OnboardingPackRead(SQLModel):
-    """A person's onboarding pack (R14): three ticks, and exactly what is missing."""
-
-    user_id: uuid.UUID
-    name: str
-    role_codes: list[str]
-    is_prescriber: bool
-    pack_complete: bool
-    #: `AGREEMENT`, `AHPRA`, `PRESCRIBER_NUMBER`, `SOP:<id>` - the same list the signing gate names.
-    missing: list[str]
-    agreement: AgreementRead | None
-    identifiers: list[IdentifierRead]
-    sops: list[PackSopRead]
-
-
-class IdentifierUpdate(SQLModel):
-    """`PUT /users/{id}/identifiers/{kind}`: record or re-verify one identifier (R11, R12).
-
-    `value` may be left out to re-attest the stored one. `ACTIVE` needs `verification_method` (how it
-    was checked, e.g. "AHPRA public register"); who and when come from the session. The step-up token
-    must be bound to `practitioner.identifier_update` and this practitioner.
-    """
-
-    model_config = SQLModelConfig(extra="forbid")
-
-    value: str | None = Field(default=None, min_length=1, max_length=40)
-    status: Literal["PENDING", "ACTIVE"]
-    expires_on: date | None = None
-    verification_method: str | None = Field(default=None, min_length=1, max_length=120)
-    step_up_token: str = Field(min_length=1, max_length=200)
-
-
-class AgreementCreate(SQLModel):
-    """`POST /users/{id}/agreements`: the agreement version the practitioner signed, and when (R13)."""
-
-    model_config = SQLModelConfig(extra="forbid")
-
-    agreement_version: str = Field(min_length=1, max_length=32)
-    signed_on: date

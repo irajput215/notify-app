@@ -1,67 +1,22 @@
-# docs2: the ClinicOS web app
+# docs2: how Notify is built
 
-`docs2/` documents the ClinicOS web app in [`frontend/`](../frontend/), the only
-frontend in this repository. The app follows the Banksia ClinicOS reference design; the backend image
-builds it and serves it at `/`, beside the API under `/api`
-([ADR-F005](adr/ADR-F005-one-app-served-by-the-backend.md)).
+Notify is two apps in one repository:
 
-`docs/` remains the normative contract for the platform. It covers requirements, invariants, gates
-and the backend modules. `docs2/` covers only what the new app adds on top of it: the UI, how the UI
-uses the API, and the API contract each screen reads. Every screen reads the API; the in-browser
-preview store is gone ([ADR-F006](adr/ADR-F006-preview-store-retired.md)). When the two disagree,
-`docs/` wins and the disagreement is a defect to raise.
+| Folder | What | Stack |
+| --- | --- | --- |
+| [`backend/`](../backend/) | The API: workspaces, auth, roles, contacts, bookings, audit | FastAPI, SQLModel, PostgreSQL (Neon, Sydney), Alembic |
+| [`frontend/`](../frontend/) | The web app: inbox, contacts, templates, automations, settings, marketing site | Next.js (App Router), React, Tailwind, shadcn/ui |
 
-## Start here
+The backend began as a copy of ClinicOS's platform layer (tenancy with row-level security, roles,
+the hash-chained audit log, field encryption, structured logging and the booking engine) with the
+cannabis-clinic domain removed. The frontend is the Notify Next.js app; ClinicOS's Vite frontend was
+not carried over.
+
+`docs/` holds the platform contract inherited from ClinicOS (requirements, invariants, gates). This
+folder covers how the two apps fit together.
 
 | Document | What it answers |
-|---|---|
-| [architecture.md](architecture.md) | How the app is built, how it talks to the backend, the speed and security measures |
-| [design-system.md](design-system.md) | Tokens, type, components, and how they map to the reference design |
-| [sdlc/](sdlc/) | One folder per feature: requirements, design, API contract, test plan, Definition of Done |
-| [adr/](adr/) | Decisions specific to this app |
-
-## Run it
-
-```bash
-# 1. Backend (any of the repo's usual ways), listening on 127.0.0.1:8000
-docker compose watch            # or: cd backend && uv run fastapi dev app/main.py
-
-# 2. The app, with hot reload (from the repository root; workspace scripts)
-cp frontend/.env.example frontend/.env.local   # optional; the proxy defaults to :8000
-bun install
-bun run dev                     # http://127.0.0.1:5174, proxies /api to the backend
-
-# Checks
-bun run lint && bun run typecheck
-bun run build                   # writes backend/app/frontend; the backend then serves it at /
-bun run test                    # Playwright, starting the dev server
-
-# The app as it ships: the backend serving the production build
-PLAYWRIGHT_BASE_URL=http://127.0.0.1:8000 bun run test
-```
-
-`docker compose watch` builds the backend image, which builds this app, so <http://localhost:8000> is
-the production build. CI runs the Playwright suite the same way (`.github/workflows/playwright.yml`).
-
-Sign in with any account that belongs to an organisation. To create one, register at `/signup` (or
-`POST /api/v1/users/signup` with a `clinic_name`; open registration is on in development) and open the
-link it emails (Mailpit locally) to confirm. The public booking page needs no account:
-`/book/<clinic-slug>`.
-
-## Feature map
-
-Every feature reads the API. Each feature's `dod.md` records what is built and what is still open.
-
-| # | Feature | Screens | Data source |
-|---|---|---|---|
-| 01 | [Auth and app shell](sdlc/01-auth-and-shell/) | Sign in, sidebar, top bar, patient quick-find | API |
-| 01 | [Auth and app shell](sdlc/01-auth-and-shell/) | Organisation signup, password recovery and reset | API |
-| 01 | [Auth and app shell](sdlc/01-auth-and-shell/) | Administration: roles and permissions, user access, accounts (superuser) | API |
-| 01 | [Auth and app shell](sdlc/01-auth-and-shell/) | Settings: profile, password, deactivate own account | API |
-| 02 | [Patients](sdlc/02-patients/) | Patients list (server search, keyset paging), add/edit, patient record | API (search and paging, M2 2B) |
-| 03 | [Consult notes](sdlc/03-consult-notes/) | Patient record → Consult notes | API (clinical records, #47) |
-| 04 | [Calendar and booking](sdlc/04-calendar-and-booking/) | Calendar day/week, patient Appointments tab, public booking page | API (appointments module) |
-| 05 | [TGA approvals](sdlc/05-approvals/) | Approvals register, patient approvals tab | API: patient tab (#46) and register (`GET /tga-approvals`, M2 phase 2A) |
-| 06 | [Patient activity](sdlc/06-patient-activity/) | Patient record → Activity | API (audit log, #42) |
-| 07 | [Script queue](sdlc/07-script-queue/) | Script queue, review and sign, patient scripts tab | API (contract agreed 2026-10-07; dispatch queues, no pharmacy transport) |
-| 08 | [Today](sdlc/08-today/) | Today's clinic dashboard | API (`GET /dashboard/today`, M2 phase 2E) |
+| --- | --- |
+| [architecture.md](architecture.md) | How the frontend talks to the backend, and where each concern lives |
+| [adr/](adr/) | Decisions specific to the app |
+| [sdlc/](sdlc/) | API contracts carried over from ClinicOS (auth, calendar and booking) |

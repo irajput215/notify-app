@@ -190,7 +190,7 @@ def list_audit_events(
             page = service.read_events(
                 session, filters=filters, limit=limit, cursor=cursor
             )
-            # Serialised **inside** the transaction, exactly as `app/modules/patients/service.py`
+            # Serialised **inside** the transaction, exactly as `app/modules/contacts/service.py`
             # does it: the session expires its instances when it closes, so a later attribute access
             # would raise `DetachedInstanceError` — or worse, lazily re-query outside the
             # tenant-scoped transaction that authorised the read.

@@ -902,7 +902,7 @@ def event_by_id(session: Session, *, event_id: uuid.UUID) -> AuditLogEntry | Non
     tenant_id = tenant_of(session)
     statement = select(AuditLogEntry).where(
         AuditLogEntry.event_id == event_id,
-        # Defence in depth, exactly as the patients service does it: RLS is the isolation boundary and
+        # Defence in depth, exactly as the contacts service does it: RLS is the isolation boundary and
         # this predicate is the second line for a connection that bypasses the policy.
         AuditLogEntry.tenant_id == tenant_id,
     )

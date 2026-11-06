@@ -52,7 +52,7 @@ from app.modules.users_roles.catalog import BOOTSTRAP_ROLE_CODE, USER_CREATE
 from app.modules.users_roles.models import SignupRequest
 
 PURPOSE = "signup-verification"
-_KEY_LABEL = b"clinicos/signup-verification/v1"
+_KEY_LABEL = b"notify/signup-verification/v1"
 #: A request's email is sent at most this many times (the first send and four resends), so the
 #: resend route cannot be turned on one mailbox.
 MAX_EMAILS_PER_REQUEST = 5
@@ -183,7 +183,7 @@ def request_signup(
     email: str,
     password: str,
     full_name: str | None,
-    clinic_name: str | None,
+    workspace_name: str | None,
 ) -> SignupRequested:
     """Record a signup and email it, the same way whether or not the address has an account.
 
@@ -208,7 +208,7 @@ def request_signup(
             email_key=key,
             # A request for a taken address keeps nothing the requester typed but the address.
             full_name=None if taken else full_name,
-            clinic_name=None if taken else clinic_name,
+            workspace_name=None if taken else workspace_name,
             hashed_password=None if taken else verifier,
             sent_at=now,
             expires_at=now + _window(),
@@ -317,9 +317,9 @@ def verify_signup(*, token: str) -> str | None:
                 return None
             tenant = (
                 None
-                if request.clinic_name is None
+                if request.workspace_name is None
                 else identity_tenancy.create_tenant_for_signup(
-                    session, request.clinic_name, tenant_id=tenant_id
+                    session, request.workspace_name, tenant_id=tenant_id
                 )
             )
             user = _create_account(
