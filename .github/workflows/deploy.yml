@@ -1,0 +1,118 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    paths-ignore:
+      - release-notes.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # Do not deploy the template repository, only projects created from it
+    if: github.repository != 'fastapi/full-stack-fastapi-template'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.12
+      - name: Install frontend dependencies
+        run: bun ci
+      - name: Build frontend
+        # Writes the frontend's production build to backend/app/frontend, which the backend
+        # serves at `/` and `fastapi deploy` ships (.fastapicloudignore keeps it).
+        run: bun run --filter frontend build
+        env:
+          # Same origin as the API: the client calls `/api` on its own origin, and the build's CSP
+          # `connect-src` is `'self'` with no second origin.
+          VITE_API_URL: ""
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "latest-known"
+      - name: Prepare database
+        run: uv run bash scripts/prestart.sh
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Migrations should run as a role that owns the schema while the application stays least
+          # privilege. Until the dedicated secret exists this falls back to DATABASE_URL, so the
+          # workflow is unchanged.
+          MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL || secrets.DATABASE_URL }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FIRST_SUPERUSER: ${{ vars.FIRST_SUPERUSER }}
+          FIRST_SUPERUSER_PASSWORD: ${{ secrets.FIRST_SUPERUSER_PASSWORD }}
+      # There is deliberately no "sync the runtime configuration" step here, and the reason is worth
+      # recording. `fastapi deploy` ships code only and never carries configuration, so the runtime
+      # `DATABASE_URL` can drift from the GitHub secret; on 2026-10-05 it did, and production
+      # returned 500 on every database-backed route while this job stayed green.
+      #
+      # Syncing the value from here was tried and is not possible: `FASTAPI_CLOUD_TOKEN` is a
+      # *deploy* token and only `deploy` accepts it. `fastapi cloud env get`/`set` need an
+      # interactive login session and fail with `not_logged_in` in CI. So drift cannot be prevented
+      # from this workflow — only detected, by the readiness gate below. Fix the value once in the
+      # FastAPI Cloud environment (or with an authenticated `fastapi cloud env set`) and this job
+      # will tell you immediately if it ever goes stale again.
+      - name: Deploy to FastAPI Cloud
+        run: uv run fastapi deploy
+        env:
+          FASTAPI_CLOUD_TOKEN: ${{ secrets.FASTAPI_CLOUD_TOKEN }}
+          FASTAPI_CLOUD_APP_ID: ${{ secrets.FASTAPI_CLOUD_APP_ID }}
+      - name: Verify the deployment can serve requests
+        # A deploy is not successful because it uploaded. During the incident this job was green
+        # while every database-backed route returned 500, because the app was up with an
+        # unreachable database and nothing asked it whether it could actually serve.
+        #
+        # This is a readiness question, not a liveness one: liveness would stay green through a
+        # total database outage. A red job here means production is already broken, which is
+        # earlier and louder than finding out from a demo.
+        run: |
+          for attempt in $(seq 1 24); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$READINESS_URL" || true)
+            if [ "$code" = "200" ]; then
+              echo "Readiness OK after ${attempt} attempt(s): $READINESS_URL"
+              exit 0
+            fi
+            echo "attempt ${attempt}: HTTP ${code:-no response}"
+            sleep 5
+          done
+          echo "::error::Deployed but not ready ($READINESS_URL). Every database-backed route will fail. Check that DATABASE_URL in the FastAPI Cloud environment matches the Neon connection string."
+          exit 1
+        env:
+          READINESS_URL: ${{ vars.READINESS_URL || 'https://clinic-os.fastapicloud.dev/api/v1/health/ready/' }}
+      - name: Verify the deployment serves this build of the app
+        # Readiness only proves the API. On 2026-10-07 the job above was green while `/` returned
+        # 404: the image had shipped without backend/app/frontend. Ask for `/` as a browser does and
+        # require the entry script this run built, so a missing UI or a stale deployment fails here.
+        run: |
+          expected=$(grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' backend/app/frontend/index.html | head -1)
+          if [ -z "$expected" ]; then
+            echo "::error::backend/app/frontend/index.html has no entry script; the build step did not run."
+            exit 1
+          fi
+          for attempt in $(seq 1 24); do
+            served=$(curl -sS --max-time 10 -H 'Accept: text/html' "$APP_URL" || true)
+            if printf '%s' "$served" | grep -qF "$expected"; then
+              echo "App OK after ${attempt} attempt(s): $APP_URL serves $expected"
+              exit 0
+            fi
+            echo "attempt ${attempt}: $APP_URL does not serve $expected yet"
+            sleep 5
+          done
+          echo "::error::Deployed, but $APP_URL does not serve this build ($expected). Check that backend/app/frontend reaches the image (.dockerignore, .fastapicloudignore)."
+          exit 1
+        env:
+          APP_URL: ${{ vars.APP_URL || 'https://clinic-os.fastapicloud.dev/' }}

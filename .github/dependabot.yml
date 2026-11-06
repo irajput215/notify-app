@@ -1,0 +1,98 @@
+version: 2
+
+# Grouping policy: a group carries only minor and patch updates. A major bump
+# always arrives as its own pull request, where the failing build points at the
+# one package that caused it, instead of riding along with two dozen routine
+# updates in a batch that looks safe.
+#
+# This is not theoretical. Two majors buried in a batch have already broken this
+# repository:
+#   @tanstack/react-table 8 -> 9   v9 changed the cell and header render-prop
+#                                  types: `cell: ({ row }) => ...` loses its
+#                                  contextual type, TS7031, build fails.
+#   typescript            6 -> 7   the pinned @hey-api/openapi-ts@0.97.3 peer-
+#                                  depends on ">=5.5.3 || >=6.0.0" and crashes
+#                                  outside it: "Cannot read properties of
+#                                  undefined (reading 'LineFeed')", which breaks
+#                                  scripts/generate-client.sh before any test runs.
+updates:
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ⬆
+    labels:
+      - "internal"
+      - "dependencies"
+      - "github_actions"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types: ["minor", "patch"]
+  # Python uv
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ⬆
+    labels: [dependencies, internal]
+    groups:
+      python-packages:
+        patterns:
+          - "*"
+        update-types: ["minor", "patch"]
+  # bun
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ⬆
+    labels: [dependencies, internal]
+    ignore:
+      - dependency-name: "@hey-api/openapi-ts"
+    groups:
+      npm-packages:
+        patterns:
+          - "*"
+        update-types: ["minor", "patch"]
+  # Docker
+  - package-ecosystem: docker
+    directories:
+      - /backend
+      - /frontend
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ⬆
+    groups:
+      docker:
+        patterns:
+          - "*"
+        update-types: ["minor", "patch"]
+  # Docker Compose
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ⬆
+    groups:
+      docker-compose:
+        patterns:
+          - "*"
+        update-types: ["minor", "patch"]

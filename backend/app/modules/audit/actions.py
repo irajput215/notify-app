@@ -1,0 +1,370 @@
+"""The closed action catalogue and the payload allow-list — frozen reference data.
+
+Sources, quoted rather than re-derived:
+
+- The **action names** are the closed vocabulary of `docs/features/04-audit-log/05-data-and-audit.md`
+  §"The action catalogue (doc 07 §1)", which is normative here. *"No new action name may be invented.
+  A new action must be registered in doc 07 §1 first, by a change to the source contract, before any
+  code emits it."*
+- The `resource_type` vocabulary is the same document's envelope table: `PATIENT, CLINICAL_RECORD,
+  PRESCRIPTION, TGA_APPROVAL, TGA_DOCUMENT, USER, TENANT, SESSION, AUDIT, REPORT, INTEGRATION, EXPORT`.
+- The **payload allow-list** is requirement R11 and `04-threat-model.md` T-AUD-4: *"Per-action
+  `metadata` allow-list enforced by type and by a runtime schema check before insert; an unlisted key
+  throws, request fails `500 AUDIT_PAYLOAD_REJECTED`."*
+
+## Two naming conflicts in the source, and which way this module resolves them
+
+Neither is resolved silently. Both are engineering decisions on an open item, recorded for the lead.
+
+1. **`patient.create` / `patient.update` vs `patient.created` / `patient.updated`.** `05-patients/05-data-and-audit.md`
+   lists `patient.created` and `patient.updated`, and then says, in the same section, *"Action names use
+   doc 07's **lowercase dotted** form"* — under which its own two rows are misspelled. Doc 07 §1, the
+   document that owns the closed catalogue, names `patient.create` and `patient.update`. The catalogue
+   is the authority, so those are the two names this module emits; the feature document's own header
+   line is the instruction being followed, and its table is the typo.
+2. **`ROLE_ASSIGNED` / `ROLE_REVOKED` vs `user.permission_change`.** `03-users-and-roles/05-data-and-audit.md`
+   names `ROLE_ASSIGNED` and `ROLE_REVOKED` in its table and then records OPEN-1 — *"one naming
+   authority must be chosen before the writer is built"* — because doc 07 §1 names
+   `user.permission_change` instead. `user.permission_change` is the only name in the closed
+   catalogue, so a role grant and a role revoke both emit it, distinguished by the `change` key in the
+   payload. Inventing `ROLE_ASSIGNED` would break the closed-catalogue rule outright; the cost of this
+   choice is that "which of the two happened" is in the payload rather than in the action, and it is
+   recorded as a gap in the PR.
+"""
+
+from types import MappingProxyType
+from typing import Final
+
+# The twelve `resource_type` values the design's envelope table names. Closed, like the actions.
+RESOURCE_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        "PATIENT",
+        "CLINICAL_RECORD",
+        "PRESCRIPTION",
+        "TGA_APPROVAL",
+        "TGA_DOCUMENT",
+        "USER",
+        "TENANT",
+        "SESSION",
+        "AUDIT",
+        "REPORT",
+        "INTEGRATION",
+        "EXPORT",
+        # Added with the appointments module (2026-10-07, owner-approved): a booking is a
+        # patient-linked object of its own, and none of the twelve types above describes it.
+        "APPOINTMENT",
+    }
+)
+
+# The `result` vocabulary. `UNKNOWN` is a provider timeout or an unresolved outcome.
+RESULTS: Final[frozenset[str]] = frozenset({"SUCCESS", "DENIED", "FAILED", "UNKNOWN"})
+
+# The closed action catalogue, grouped by the resource type doc 07 §1 groups it by. Values are
+# lowercase dotted; nothing outside this tuple may ever be written to `audit_log`.
+ACTION_CATALOGUE: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
+    (
+        "SESSION",
+        (
+            "auth.login",
+            "auth.logout",
+            "auth.login_failed",
+            "auth.step_up",
+            "auth.step_up_failed",
+        ),
+    ),
+    (
+        "PATIENT",
+        (
+            "patient.read",
+            "patient.create",
+            "patient.update",
+            "patient.export",
+            # Registered with T1-34 (decision D-007, 2026-10-08): the interim upkeep of a patient's
+            # care team. The resource is the patient; the payload names the relationship.
+            "care_relationship.create",
+            "care_relationship.end",
+            # Registered with patient intake (docs3 feature 03, 2026-10-31): a public application,
+            # a staff read of one, and the clinic's decision. The resource is the application; the
+            # payload names the patient. The answers themselves are never audited.
+            "intake.application_submit",
+            "intake.application_read",
+            "intake.application_decide",
+            # A pharmacy added to the clinic's directory (manual §8.1).
+            "pharmacy.create",
+        ),
+    ),
+    (
+        "CLINICAL_RECORD",
+        ("clinical_record.read", "clinical_record.write"),
+    ),
+    (
+        "PRESCRIPTION",
+        (
+            "prescription.create",
+            # Registered with T1-34 (2026-10-08): `11-prescribing/02-user-stories.md` asks for
+            # "`prescription.read`-class access recorded per patient, not per row", and
+            # `10-prescription-safety-gate/03-design.md` puts the treating relationship on the read.
+            "prescription.read",
+            "prescription.modify",
+            "prescription.sign",
+            "prescription.dispatch",
+            "prescription.dispatch_blocked",
+            "prescription.reject",
+            "prescription.dispatch_failed",
+        ),
+    ),
+    (
+        "TGA_APPROVAL",
+        (
+            "tga_approval.create",
+            "tga_approval.modify",
+            "tga_approval.state_change",
+            "tga_approval.match",
+            "tga_approval.verify",
+            "tga_approval.read",
+        ),
+    ),
+    ("TGA_DOCUMENT", ("tga_document.ingest", "tga_document.extract")),
+    (
+        "USER",
+        (
+            "user.permission_change",
+            "user.create",
+            "user.deactivate",
+            # Registered with staff onboarding (docs3 feature 02, 2026-10-31): a change to a
+            # prescriber's credential vault, an attested agreement, and a read of the pack. The
+            # resource is the practitioner; payloads carry kinds and statuses, never a value.
+            "practitioner.identifier_update",
+            "practitioner.agreement_record",
+            "practitioner.onboarding_read",
+        ),
+    ),
+    # `tenant.config_changed` registered 2026-10-08 with the clinic display name
+    # (`docs/features/04-audit-log/05-data-and-audit.md`): feature 01 names it
+    # (`01-tenancy-and-clinics/05-data-and-audit.md`) for a tenant configuration change.
+    (
+        "TENANT",
+        (
+            "tenant.security_config_change",
+            "tenant.config_changed",
+            # Registered with staff onboarding (docs3 feature 02): an SOP version published, and a
+            # person's acknowledgement of one. The resource is the SOP.
+            "sop.publish",
+            "sop.acknowledge",
+        ),
+    ),
+    ("INTEGRATION", ("integration.request",)),
+    ("AUDIT", ("audit.read",)),
+    # Registered with the appointments module (2026-10-07, owner-approved, recorded in
+    # `docs/features/04-audit-log/05-data-and-audit.md`): a booking, and each status change it goes
+    # through (`docs2/sdlc/04-calendar-and-booking/api.md`, "Audited").
+    # `appointment.read` registered with T1-34 (2026-10-08): `docs2/sdlc/04-calendar-and-booking/
+    # api.md` deferred the audit of booking reads "with `patient.read` (T1-34)".
+    (
+        "APPOINTMENT",
+        ("appointment.create", "appointment.state_change", "appointment.read"),
+    ),
+)
+
+# Derived, never a second source of truth.
+ACTIONS: Final[frozenset[str]] = frozenset(
+    action for _resource_type, actions in ACTION_CATALOGUE for action in actions
+)
+
+# The action → resource-type mapping, derived from the same tuple so the two cannot drift.
+RESOURCE_TYPE_BY_ACTION: Final[MappingProxyType[str, str]] = MappingProxyType(
+    {
+        action: resource_type
+        for resource_type, actions in ACTION_CATALOGUE
+        for action in actions
+    }
+)
+
+# Every key any action may carry in its `metadata` payload. A key that is not listed here is refused
+# before insert — R11, T-AUD-4. The union is deliberately not "anything an action wants": adding a
+# key is a deliberate change with a test.
+#
+# **No value.** Every key names a field, a code, or a count. `changed_fields`, `field_set`,
+# `added` and `removed` carry *names*, never clinical content; `reason` carries a controlled code
+# (`04-design.md` "Failure behaviour"). Clinical narrative, medicine or dose text, diagnosis codes,
+# Medicare numbers, IHIs, OCR text, document bodies and full request bodies are refused by
+# construction: there is no key for them, and an unknown key throws.
+PAYLOAD_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "added",
+        "approval_id",
+        "block_reason",
+        "care_relationship_id",
+        "change",
+        "changed_fields",
+        # Feature 10/13 (prescription dispatch and its outbound transport): closed-vocabulary
+        # classes, never provider text (`10-prescription-safety-gate/05-data-and-audit.md`).
+        "error_class",
+        "field_set",
+        "from_state",
+        # The server-computed SHA-256 dispatch key (INTERNAL, `10/05` field table), never the
+        # client's raw `Idempotency-Key` header.
+        "idempotency_key",
+        # docs3 feature 02: which identifier of a prescriber's vault changed (a closed code).
+        "kind",
+        "latency_ms",
+        # Feature 02's `STEP_UP_SUCCEEDED` fields: the factor class, never the factor.
+        "mfa_method",
+        "operation",
+        "outcome_class",
+        "patient_id",
+        "provider",
+        "purpose",
+        "query_filters",
+        "reason",
+        "record_count",
+        "removed",
+        "result_count",
+        "role_code",
+        "source",
+        "step_up",
+        # FEAT-11 US-5: an addendum's `prescription.modify` names the version it supersedes.
+        "supersedes_id",
+        "supersedes_version",
+        "target_user_id",
+        "to_state",
+        "version",
+    }
+)
+
+# The keys a read of patient-linked rows may carry (T1-34): the patient for a patient-level read, the
+# relationship and purpose that authorised it, and for a practice-wide read the kinds of filter used
+# and how many rows came back.
+_READ_KEYS: Final[frozenset[str]] = frozenset(
+    {"patient_id", "care_relationship_id", "purpose", "query_filters", "result_count"}
+)
+
+# The keys each action may carry. An action absent from this mapping may carry **no** payload at all:
+# the allow-list is deny-by-default, so a new action starts with nothing and earns each key.
+#
+# Only the actions this slice emits are enumerated. The remaining catalogue entries are emitted by
+# later features and will add their own row here with the test the change needs (T1-22).
+PAYLOAD_ALLOW_LIST: Final[MappingProxyType[str, frozenset[str]]] = MappingProxyType(
+    {
+        # `05-patients/05-data-and-audit.md`: `resource_id` and `field_set` — field **names** only.
+        "patient.create": frozenset({"field_set"}),
+        # The same table: `resource_id`, `changed_fields` (names only) and `reason`.
+        "patient.update": frozenset({"changed_fields", "reason"}),
+        # `05-patients/05-data-and-audit.md` names `resource_id`, `care_relationship_id`, `purpose`.
+        # A list or search read has no single `resource_id`, so it records how many patients the page
+        # returned (`result_count`) and which *kinds* of search term were used (`query_filters`, e.g.
+        # `["name_prefix"]`) - the same two keys `audit.read` carries for the same reason, and never
+        # the term itself (05-patients US-7: "the search term itself is never written to the audit
+        # payload").
+        "patient.read": frozenset(
+            {"care_relationship_id", "purpose", "result_count", "query_filters"}
+        ),
+        # docs3 feature 03: ids and statuses only - never an answer, a name or the declaration.
+        "intake.application_submit": frozenset({"patient_id"}),
+        "intake.application_read": frozenset({"patient_id"}),
+        "intake.application_decide": frozenset({"patient_id", "to_state"}),
+        # docs3 feature 02: kinds, statuses and versions - never an identifier value or SOP text.
+        "practitioner.identifier_update": frozenset(
+            {"target_user_id", "kind", "to_state", "step_up"}
+        ),
+        "practitioner.agreement_record": frozenset({"target_user_id", "version"}),
+        "practitioner.onboarding_read": frozenset({"target_user_id"}),
+        "sop.publish": frozenset({"version"}),
+        "sop.acknowledge": frozenset({"version"}),
+        # `04-audit-log/05-data-and-audit.md`: `audit.read` carries `query_filters` and `result_count`.
+        "audit.read": frozenset({"query_filters", "result_count"}),
+        # `06-clinical-records/05-data-and-audit.md` maps its four story labels onto the two
+        # `CLINICAL_RECORD` actions doc 07 §1 already carries, and fixes the key fields they may
+        # record — identifiers and version numbers, never the narrative, never the typed amendment
+        # reason. `patient_id`/`version`/`supersedes_version` are registered here for it.
+        "clinical_record.write": frozenset(
+            {"patient_id", "version", "supersedes_version"}
+        ),
+        # The same table's `CLINICAL_RECORD_VIEWED` row: the patient, the relationship and purpose
+        # that authorised the read when those exist, and how many versions were returned.
+        "clinical_record.read": frozenset(
+            {"patient_id", "care_relationship_id", "purpose", "result_count"}
+        ),
+        # Doc 07 §1's `user.permission_change`, carrying what `03-users-and-roles/05-data-and-audit.md`
+        # asks `ROLE_ASSIGNED`/`ROLE_REVOKED` to carry: the target, the role code, and the change.
+        "user.permission_change": frozenset(
+            {"target_user_id", "role_code", "change", "added", "removed", "step_up"}
+        ),
+        # Doc 07 §1's `user.create`, emitted by the staff invitation
+        # (`POST /api/v1/users/staff`). `03-users-and-roles/05-data-and-audit.md` asks
+        # `USER_CREATED` to carry "target user id, roles, inviter, invitation expiry": the inviter is
+        # the envelope's `actor_id`, the roles are `added` (role **codes**), and no key is invented
+        # for the expiry, which is the event's timestamp plus `STAFF_INVITATION_EXPIRE_HOURS`.
+        # Only keys already in the vocabulary; a refused invitation carries `added` and no target.
+        # `change` (2026-10-08) marks a re-sent invitation, `INVITATION_RESENT`: it re-issues the
+        # invitation whose expiry `USER_CREATED` records, and the closed catalogue has no
+        # `USER_INVITED` (`03-users-and-roles/05-data-and-audit.md`, "Resend"; OPEN-3).
+        "user.create": frozenset({"target_user_id", "added", "change", "step_up"}),
+        # `01-tenancy-and-clinics/05-data-and-audit.md`: `changed_fields` (names only) and the step-up
+        # flag. A display-name change carries `["display_name"]` and never the name itself.
+        "tenant.config_changed": frozenset({"changed_fields", "step_up"}),
+        # A booking: the patient it is for and where it came from (`STAFF` or `PUBLIC_BOOKING`, R6).
+        # Never the time, the type or a name - those live in the row the event points at.
+        "appointment.create": frozenset({"patient_id", "source"}),
+        # A status change (R4): the two **codes** of the transition, never free text.
+        "appointment.state_change": frozenset({"from_state", "to_state"}),
+        # `08-tga-approvals/05-data-and-audit.md` names `approval.read` ("patient-level read:
+        # actor, role, patient_id, count"), registered in doc 07 section 1 as `tga_approval.read`
+        # on 2026-10-07 (owner decision, M2 phase 2A). A patient-level read carries `patient_id`
+        # and `result_count`; the practice-wide register carries `query_filters` (state codes and
+        # a day count, never a value from a record) and `result_count`.
+        # T1-34 adds the relationship and the purpose to a patient-level read.
+        "tga_approval.read": _READ_KEYS,
+        # T1-34 / D-007: a patient's care team. The relationship, the practitioner it names and, on
+        # a create, where it came from (`STAFF_RECORDED`). Never a name.
+        "care_relationship.create": frozenset(
+            {"care_relationship_id", "target_user_id", "source"}
+        ),
+        "care_relationship.end": frozenset({"care_relationship_id", "target_user_id"}),
+        # T1-34: a read of bookings or scripts. A patient-level read names the patient, the
+        # relationship and the purpose; a practice-wide read (the calendar, the queue, the Today
+        # page) names the kinds of filter and how many rows it returned.
+        "appointment.read": _READ_KEYS,
+        "prescription.read": _READ_KEYS,
+        # `02-authentication/05-data-and-audit.md` `STEP_UP_SUCCEEDED`: `operation`, `resource_id`
+        # (the envelope's) and `mfa_method`; the failure carries the attempted operation.
+        "auth.step_up": frozenset({"operation", "mfa_method"}),
+        "auth.step_up_failed": frozenset({"operation"}),
+        # `11-prescribing/05-data-and-audit.md` and `10-prescription-safety-gate/05-data-and-audit.md`:
+        # identifiers, codes and classes only - never medicine, dose, quantity or directions.
+        "prescription.create": frozenset({"patient_id"}),
+        # `11-prescribing/05-data-and-audit.md`: a draft edit names the changed fields (never a
+        # value); the addendum's new version also names the original it supersedes (US-5).
+        "prescription.modify": frozenset(
+            {"patient_id", "changed_fields", "supersedes_id"}
+        ),
+        # A cancellation: the reason code is the envelope's `reason`; the payload says from where.
+        "prescription.reject": frozenset({"patient_id", "from_state"}),
+        "prescription.sign": frozenset(
+            {"patient_id", "step_up", "approval_id", "block_reason"}
+        ),
+        "prescription.dispatch": frozenset(
+            {"approval_id", "idempotency_key", "provider"}
+        ),
+        "prescription.dispatch_blocked": frozenset({"block_reason", "approval_id"}),
+        "prescription.dispatch_failed": frozenset(
+            {"error_class", "outcome_class", "provider", "block_reason"}
+        ),
+        # `13-integration-boundaries/05-data-and-audit.md`: one per outbound provider call.
+        "integration.request": frozenset({"provider", "outcome_class", "latency_ms"}),
+    }
+)
+
+# The refusal reason code. Requirement R11 and T-AUD-4 name it exactly: an unlisted `metadata` key
+# throws `AUDIT_PAYLOAD_REJECTED` and the request fails.
+PAYLOAD_REJECTED: Final[str] = "AUDIT_PAYLOAD_REJECTED"
+
+
+def resource_type_for(action: str) -> str:
+    """The `resource_type` the catalogue binds to `action`.
+
+    Raises `KeyError` for an action outside the catalogue, so a typo cannot reach the writer: the
+    caller that invented a name fails at its own call site rather than writing an event no catalogue
+    names.
+    """
+    return RESOURCE_TYPE_BY_ACTION[action]

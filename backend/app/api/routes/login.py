@@ -1,0 +1,139 @@
+import logging
+from datetime import timedelta
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlmodel import Session, select
+
+from app import crud
+from app.api.deps import ActiveTenantUser, SessionDep
+from app.core import security
+from app.core.config import settings
+from app.core.db import autocommit_engine
+from app.core.rate_limit import login_rate_limit, password_recovery_rate_limit
+from app.models import Message, NewPassword, Token, User, UserPublic, UserUpdate
+from app.utils import (
+    generate_password_reset_token,
+    generate_reset_password_email,
+    password_reset_token_unspent,
+    send_email,
+    verify_password_reset_token,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["login"])
+
+
+@router.post(
+    "/login/access-token",
+    dependencies=[Depends(login_rate_limit)],
+)
+def login_access_token(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+) -> Token:
+    """
+    OAuth2 compatible token login, get an access token for future requests
+
+    The account read is one statement on the autocommit engine: no `BEGIN` and no `ROLLBACK`
+    around it, so sign-in costs one database round trip instead of three (each ~210 ms while the
+    app and the database are not co-located, `docs/reference/performance.md`). The rare rehash
+    write commits on its own, exactly as before.
+    """
+    with Session(autocommit_engine) as session:
+        user = crud.authenticate(
+            session=session, email=form_data.username, password=form_data.password
+        )
+    if not user:
+        raise HTTPException(status_code=400, detail="Incorrect email or password")
+    elif not user.is_active:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    return Token(
+        access_token=security.create_access_token(
+            user.id, expires_delta=access_token_expires
+        )
+    )
+
+
+@router.post("/login/test-token", response_model=UserPublic)
+def test_token(current_user: ActiveTenantUser) -> Any:
+    """
+    Test access token
+
+    Carries the tenant-status refusal (R10) like the other self-service routes: a suspended
+    organisation's session is refused here too, not only where tenant data is read.
+    """
+    return current_user
+
+
+@router.post(
+    "/password-recovery/{email}",
+    dependencies=[Depends(password_recovery_rate_limit)],
+)
+def recover_password(email: str, session: SessionDep) -> Message:
+    """
+    Password Recovery
+    """
+    user = crud.get_user_by_email(session=session, email=email)
+
+    # Always return the same response to prevent email enumeration attacks
+    # Only send email if user actually exists, and only when outgoing mail is configured: without it
+    # `send_email` fails, and a 500 for registered addresses alone would enumerate them.
+    if user and not settings.emails_enabled:
+        logger.warning(
+            "Password recovery requested but outgoing email is not configured"
+        )
+    elif user:
+        password_reset_token = generate_password_reset_token(
+            email=email, hashed_password=user.hashed_password
+        )
+        email_data = generate_reset_password_email(
+            email_to=user.email, email=email, token=password_reset_token
+        )
+        send_email(
+            email_to=user.email,
+            subject=email_data.subject,
+            html_content=email_data.html_content,
+        )
+    return Message(
+        message="If that email is registered, we sent a password recovery link"
+    )
+
+
+@router.post(
+    "/reset-password/",
+    dependencies=[Depends(password_recovery_rate_limit)],
+)
+def reset_password(session: SessionDep, body: NewPassword) -> Message:
+    """
+    Reset password
+
+    Carries the same 5/min recovery limit as the request route
+    (`docs/reference/build-contract.md` control 10): the reset token is a bearer credential that
+    grants a session, so guessing one must be at least as expensive as asking for one. Both routes
+    share the `password-recovery` window, which caps recovery work from one address in total.
+    """
+    # A recovery link is single use: it is bound to the password hash it was issued for, so once
+    # it has set a password (or the password changed any other way) it is refused exactly like a
+    # forged or expired one. The row is locked while the link is checked and spent, so two
+    # concurrent submissions of one link cannot both succeed.
+    claims = verify_password_reset_token(token=body.token)
+    if not claims:
+        raise HTTPException(status_code=400, detail="Invalid token")
+    user = session.exec(
+        select(User).where(User.email == claims.subject).with_for_update()
+    ).first()
+    if not user or not password_reset_token_unspent(claims, user.hashed_password):
+        # Don't reveal that the user doesn't exist or that the link was spent
+        raise HTTPException(status_code=400, detail="Invalid token")
+    elif not user.is_active:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    user_in_update = UserUpdate(password=body.new_password)
+    crud.update_user(
+        session=session,
+        db_user=user,
+        user_in=user_in_update,
+    )
+    return Message(message="Password updated successfully")

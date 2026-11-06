@@ -1,0 +1,642 @@
+"""Tenant service facade.
+
+Everything outside this package reaches `tenants` through here
+(`docs/reference/build-contract.md` §7: a module owns its tables).
+
+The flow this implements is step ① of `docs/reference/business-flow.md`: a clinic
+registers, which creates its organisation and makes the signer its administrator.
+
+`create_tenant_for_signup` writes the organisation on **the caller's session and never commits**:
+registration is one transaction, owned by the route, so the tenant, the account and the Practice
+Owner grant either all exist or none does (see `app/api/routes/users.py`, `POST /users/signup`).
+"""
+
+import hashlib
+import re
+import secrets
+import uuid
+from collections.abc import Iterator, Sequence
+from itertools import islice
+from typing import Any, Final
+
+from sqlalchemy import func, insert, text, update
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import select as sa_select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import make_transient_to_detached
+from sqlmodel import Session, col, select
+
+from app.core.db import driver_statement, tenant_transaction
+from app.core.security import verify_password
+from app.crud import DUMMY_HASH
+from app.models import User
+
+# The audit module is reached through its service facade (`docs/reference/build-contract.md` §7).
+from app.modules.audit import service as audit
+from app.modules.identity_tenancy.models import (
+    DISPLAY_NAME_MAX_LENGTH,
+    STEP_UP_MAX_LIFETIME_SECONDS,
+    StepUpGrant,
+    Tenant,
+)
+from app.modules.identity_tenancy.schemas import (
+    PublicClinicRead,
+    StepUpGrantRead,
+    TenantProfileRead,
+    normalise_display_name,
+)
+
+# `retention_profile` names a retention schedule — none exists yet (open item L2,
+# retention by state and territory), so both paths use a placeholder.
+DEFAULT_RETENTION_PROFILE = "default"
+
+DEMO_TENANT_SLUG = "demo-clinic"
+DEMO_TENANT_LEGAL_NAME = "Demo Clinic Pty Ltd"
+DEMO_TENANT_DISPLAY_NAME = "Demo Clinic"
+
+# The unique index behind "two clinics may share a name": `Field(unique=True, index=True)` renders as
+# a unique index under the naming convention (`app.core.metadata`), and PostgreSQL reports the index
+# name in the violation. Only this one uniqueness violation is retried — an email collision is a
+# different fact about a different table and must not be masked by a slug retry.
+TENANT_SLUG_UNIQUE_INDEX = "ix_tenants_slug"
+
+# A bound, not `while True`: a pathological run of collisions fails closed instead of spinning.
+MAX_SLUG_ATTEMPTS = 100
+
+# The only status that may transact. R10 (`docs/features/01-tenancy-and-clinics/01-requirements.md`):
+# a `SUSPENDED` tenant is refused on every request, even with a valid unexpired session; the design's
+# deny-by-default path enforces `status = ACTIVE` at resolution. The check is an allow-list rather
+# than a deny-list of `SUSPENDED`/`CLOSED`, so a status added to the vocabulary later — or a value the
+# database somehow holds — fails closed instead of being admitted by omission.
+ACTIVE_STATUS = "ACTIVE"
+
+
+def is_active_status(status: str | None) -> bool:
+    """`True` only for the literal `ACTIVE`. Fails closed on anything else, including unknown values."""
+    return status == ACTIVE_STATUS
+
+
+def _tenant_id_and_status(
+    session: Session, *, slug: str | None = None, tenant_id: uuid.UUID | None = None
+) -> tuple[uuid.UUID, str] | None:
+    """One tenant's `id` and `status`, by slug or by id, selecting only those two columns.
+
+    Column-limited on purpose, like `router._current_tenant`: `clinos_app` holds `SELECT` on named
+    columns of `tenants` only (`legal_name` and `retention_profile` are withheld), so an ORM entity
+    read asks for every column and fails with `permission denied` once the app connects as that role.
+    """
+    table = Tenant.metadata.tables[Tenant.__tablename__]
+    statement = sa_select(table.c.id, table.c.status)
+    if slug is not None:
+        statement = statement.where(table.c.slug == slug)
+    else:
+        statement = statement.where(table.c.id == tenant_id)
+    row = session.connection().execute(statement).one_or_none()
+    return None if row is None else (row[0], row[1])
+
+
+def active_tenant_id_for_slug(session: Session, slug: str) -> uuid.UUID | None:
+    """The tenant an unauthenticated public route serves, resolved **server-side** from its slug.
+
+    The slug is routing only, never an authorisation input (`01-tenancy-and-clinics/03-design.md`):
+    it chooses *which* clinic's public booking page is asked for and grants nothing - no session, no
+    permission, no read of anything but that clinic's free slots. Only an `ACTIVE` organisation is
+    returned; an unknown slug and a suspended, closing or closed organisation all answer `None`, so the
+    caller's `404` is uniform and discloses neither existence nor status.
+    """
+    tenant = _tenant_id_and_status(session, slug=slug)
+    if tenant is None or not is_active_status(tenant[1]):
+        return None
+    return tenant[0]
+
+
+def active_tenant_ids(session: Session) -> list[uuid.UUID]:
+    """Every `ACTIVE` organisation's id: the input of a scheduled job that runs one tenant at a time.
+
+    `tenants` is global, so this is the one read a job makes across tenants, and it returns
+    identifiers only; everything the job then does runs in one tenant's own transaction.
+    """
+    table = Tenant.metadata.tables[Tenant.__tablename__]
+    return list(
+        session.connection()
+        .execute(
+            sa_select(table.c.id)
+            .where(table.c.status == ACTIVE_STATUS)
+            .order_by(table.c.id)
+        )
+        .scalars()
+    )
+
+
+def tenant_is_active(session: Session, *, tenant_id: uuid.UUID) -> bool:
+    """Whether the tenant this request resolved is allowed to transact.
+
+    `tenants` is global (no RLS), so this is a plain read. A tenant row that cannot be read is
+    refused exactly as a non-`ACTIVE` one is: the boundary answers one code for both, so the
+    response cannot disclose whether the organisation exists.
+    """
+    tenant = _tenant_id_and_status(session, tenant_id=tenant_id)
+    return tenant is not None and is_active_status(tenant[1])
+
+
+_ACCOUNT_COLUMNS: Final = tuple(sa_inspect(User).local_table.columns)
+
+
+def session_account_statement(user_id: uuid.UUID) -> tuple[str, dict[str, Any]]:
+    """The read of a session's account and its organisation's status, as one driver statement.
+
+    Every authenticated request starts here, so the account and its tenant are one read rather than
+    two, and it is pipelined with the request's actor resolution (`app.api.deps`). The tenant is the
+    account row's own, joined on the server: nothing from the request is read (INV-1).
+    """
+    return driver_statement(
+        sa_select(*_ACCOUNT_COLUMNS, col(Tenant.status))
+        .outerjoin(Tenant, col(Tenant.id) == col(User.tenant_id))
+        .where(col(User.id) == user_id)
+    )
+
+
+def session_account_from_rows(
+    rows: Sequence[Sequence[Any]],
+) -> tuple[User, bool] | None:
+    """The account `session_account_statement` read, and whether its organisation may transact.
+
+    `None` when the account does not exist. The account is returned detached, as if loaded and its
+    session closed, so a route that changes it attaches it to its own session and updates it.
+
+    The flag follows `tenant_is_active`: an account with no organisation has no status to enforce
+    (the platform administrator), and an organisation row that cannot be read is refused exactly as a
+    non-`ACTIVE` one is.
+    """
+    if not rows:
+        return None
+    *values, status = rows[0]
+    user = User(
+        **{
+            column.key: value
+            for column, value in zip(_ACCOUNT_COLUMNS, values, strict=True)
+        }
+    )
+    make_transient_to_detached(user)
+    return user, user.tenant_id is None or is_active_status(status)
+
+
+def tenant_display_name(session: Session, *, tenant_id: uuid.UUID) -> str | None:
+    """The organisation's public display name, or `None` when the row cannot be read.
+
+    For the caller's **own** resolved tenant only (a staff invitation names the clinic the invitee
+    is joining). `tenants` is global with no RLS, so the caller must pass the tenant the session
+    resolved and never a request value. Never `legal_name`: that is CONFIDENTIAL, and an email leaves
+    the platform.
+    """
+    table = Tenant.metadata.tables[Tenant.__tablename__]
+    return (
+        session.connection()
+        .execute(sa_select(table.c.display_name).where(table.c.id == tenant_id))
+        .scalar_one_or_none()
+    )
+
+
+def display_name_from_slug(slug: str) -> str:
+    """The name a slug reads as (`green-valley-clinic` -> `Green Valley Clinic`).
+
+    The fallback for a clinic name that normalises to nothing, and the rule the migration that added
+    `display_name` backfilled existing tenants with: the name their public page already showed.
+    """
+    words = [word[:1].upper() + word[1:] for word in slug.split("-") if word]
+    return " ".join(words)[:DISPLAY_NAME_MAX_LENGTH].rstrip() or "Clinic"
+
+
+def signup_display_name(clinic_name: str, *, slug: str) -> str:
+    """The display name a new clinic starts with: the name typed at signup, normalised.
+
+    Signup accepts up to 255 characters (the legal name's bound); the display name keeps the first
+    120, cut at the last whole word that fits when there is one. A name with nothing printable in it
+    falls back to the slug's reading, so signup never fails on the display name.
+    """
+    try:
+        return normalise_display_name(clinic_name)
+    except ValueError:
+        pass
+    collapsed = " ".join(
+        "".join(" " if not ch.isprintable() else ch for ch in clinic_name).split()
+    )
+    if len(collapsed) > DISPLAY_NAME_MAX_LENGTH:
+        cut = collapsed[: DISPLAY_NAME_MAX_LENGTH + 1]
+        collapsed = (
+            cut.rsplit(" ", 1)[0] if " " in cut else cut[:DISPLAY_NAME_MAX_LENGTH]
+        ).rstrip()
+    return collapsed or display_name_from_slug(slug)
+
+
+def public_clinic_for_slug(session: Session, slug: str) -> PublicClinicRead | None:
+    """What an unauthenticated visitor may know about the clinic behind a slug: its display name.
+
+    The same resolution as `active_tenant_id_for_slug` (only an `ACTIVE` organisation; anything else
+    is `None`, so the caller's `404` is uniform), reading **only** the PUBLIC column. `legal_name`,
+    the id and the status never leave this function.
+    """
+    table = Tenant.metadata.tables[Tenant.__tablename__]
+    row = (
+        session.connection()
+        .execute(
+            sa_select(table.c.display_name).where(
+                table.c.slug == slug, table.c.status == ACTIVE_STATUS
+            )
+        )
+        .one_or_none()
+    )
+    return None if row is None else PublicClinicRead(display_name=row[0])
+
+
+def slugify(clinic_name: str) -> str:
+    """A routing slug: lower-case, hyphenated, within the column's 64 characters.
+
+    The slug is routing only and never an authorisation input
+    (`docs/features/01-tenancy-and-clinics/03-design.md`).
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", clinic_name.lower()).strip("-")
+    return slug[:64] or "organisation"
+
+
+def _slug_candidates(base: str) -> Iterator[str]:
+    """The deterministic sequence of slugs one clinic name may take: `base`, `base-2`, `base-3`, …"""
+    yield base
+    suffix = 2
+    while True:
+        yield f"{base[:59]}-{suffix}"
+        suffix += 1
+
+
+def _is_slug_collision(error: IntegrityError) -> bool:
+    """Whether this uniqueness violation is the tenant slug's, and so is the one signup retries."""
+    diagnostic = getattr(getattr(error, "orig", None), "diag", None)
+    return getattr(diagnostic, "constraint_name", None) == TENANT_SLUG_UNIQUE_INDEX
+
+
+def create_tenant_for_signup(
+    session: Session, clinic_name: str, *, tenant_id: uuid.UUID | None = None
+) -> Tenant:
+    """Create the organisation, inside the caller's transaction. **The caller commits.**
+
+    Two clinics may share a name, so the slug is uniqued rather than rejected. Uniqueness is decided
+    by the database, not by a read-then-write check: the read can be stale between two concurrent
+    signups, and the unique index is the only authority. Each attempt runs in a savepoint, so a
+    collision rolls back exactly that attempt — the caller's transaction stays usable and keeps
+    everything already written to it. A violation on any other constraint is raised, not retried.
+
+    `tenant_id` may be pre-generated by the caller so it can open the tenant's transaction (and set
+    `app.tenant_id`) before the row exists; the row rolled back on a collision is retried under the
+    same id, which is free again once the savepoint rolls back.
+    """
+    base = slugify(clinic_name)
+    for slug in islice(_slug_candidates(base), MAX_SLUG_ATTEMPTS):
+        try:
+            with session.begin_nested():
+                tenant = Tenant(
+                    id=tenant_id if tenant_id is not None else uuid.uuid4(),
+                    slug=slug,
+                    legal_name=clinic_name,
+                    display_name=signup_display_name(clinic_name, slug=slug),
+                    retention_profile=DEFAULT_RETENTION_PROFILE,
+                )
+                session.add(tenant)
+                session.flush()
+        except IntegrityError as error:
+            if not _is_slug_collision(error):
+                raise
+            continue
+        return tenant
+
+    # Fail closed rather than loop or invent a slug the caller did not ask for.
+    raise RuntimeError(
+        f"could not find a free tenant slug for {clinic_name!r} in {MAX_SLUG_ATTEMPTS} attempts"
+    )
+
+
+def seed_demo_tenant(session: Session) -> Tenant:
+    """Create the demo tenant if it is absent. Idempotent: startup calls it every run.
+
+    Opt-in seed data (`SEED_DEMO_TENANT`), so it reads the whole entity: it needs `legal_name`, which
+    the application role cannot read. Run it with the migration role.
+    """
+    existing = session.exec(
+        select(Tenant).where(Tenant.slug == DEMO_TENANT_SLUG)
+    ).first()
+    if existing is not None:
+        return existing
+
+    tenant = Tenant(
+        slug=DEMO_TENANT_SLUG,
+        legal_name=DEMO_TENANT_LEGAL_NAME,
+        display_name=DEMO_TENANT_DISPLAY_NAME,
+        retention_profile=DEFAULT_RETENTION_PROFILE,
+    )
+    session.add(tenant)
+    session.commit()
+    session.refresh(tenant)
+    return tenant
+
+
+# --------------------------------------------------------------------------------------------
+# The clinic's display name (`docs2/sdlc/01-auth-and-shell/api.md`, "Clinic display name")
+# --------------------------------------------------------------------------------------------
+#
+# A PUBLIC presentation setting, not a security setting: it changes what the sidebar, the booking page
+# and the clinic's emails call the clinic, and nothing about who may do what. So it is not R12's
+# step-up-gated `PATCH /tenants/current` (which still refuses every security setting), but its own
+# sub-resource, authorised by `tenant:configure` (Practice Owner only) and audited as
+# `tenant.config_changed` with `changed_fields` and `step_up: false` on the same transaction.
+
+TENANT_CONFIG_CHANGED: Final[str] = "tenant.config_changed"
+# Recorded (never returned) when a client put a `tenant_id` in the body: it is ignored, the change
+# lands on the session's tenant, and the attempt is on the trail (INV-1).
+CLIENT_TENANT_ID_IGNORED: Final[str] = "CLIENT_TENANT_ID_IGNORED"
+_DISPLAY_NAME_FIELDS: Final[tuple[str, ...]] = ("display_name",)
+
+
+def _record_config_change(
+    session: Session,
+    *,
+    tenant_id: uuid.UUID,
+    result: str,
+    changed_fields: Sequence[str],
+    reason: str | None = None,
+) -> None:
+    audit.record(
+        session,
+        audit.AuditEvent(
+            action=TENANT_CONFIG_CHANGED,
+            result=result,
+            resource_id=tenant_id,
+            reason=reason,
+            payload={"changed_fields": list(changed_fields), "step_up": False},
+        ),
+    )
+
+
+def tenant_profile(*, tenant_id: uuid.UUID) -> TenantProfileRead | None:
+    """The caller's own clinic's PUBLIC profile. Only the display name column is read."""
+    with tenant_transaction(tenant_id=tenant_id) as session:
+        name = tenant_display_name(session, tenant_id=tenant_id)
+    return None if name is None else TenantProfileRead(display_name=name)
+
+
+def record_display_name_denial(
+    *, tenant_id: uuid.UUID, actor_id: uuid.UUID, actor_role: str | None, reason: str
+) -> None:
+    """Audit a display-name change the policy layer refused before anything was written.
+
+    Its own transaction, because nothing else is written. A failure here propagates, so a refusal
+    that cannot be audited fails closed (`500`), never a silent `403`.
+    """
+    with tenant_transaction(
+        tenant_id=tenant_id, actor_id=actor_id, actor_role=actor_role
+    ) as session:
+        _record_config_change(
+            session,
+            tenant_id=tenant_id,
+            result="DENIED",
+            changed_fields=_DISPLAY_NAME_FIELDS,
+            reason=reason,
+        )
+
+
+def update_display_name(
+    *,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    actor_role: str | None,
+    display_name: str,
+    client_tenant_id_supplied: bool,
+) -> TenantProfileRead:
+    """Rename the caller's own clinic. The caller has already authorised `tenant:configure`.
+
+    One conditional `UPDATE` on the session's tenant id (the only `UPDATE` the application role holds
+    on `tenants` is on these two columns), then the event, on one transaction (INV-4): a failed audit
+    write rolls the rename back. Saving the name the clinic already has writes nothing and records
+    nothing, so the trail holds changes only. A `tenant_id` the client sent was dropped by the schema;
+    the attempt is recorded `DENIED` `CLIENT_TENANT_ID_IGNORED` on the same transaction.
+    """
+    table = Tenant.metadata.tables[Tenant.__tablename__]
+    with tenant_transaction(
+        tenant_id=tenant_id, actor_id=actor_id, actor_role=actor_role
+    ) as session:
+        if client_tenant_id_supplied:
+            _record_config_change(
+                session,
+                tenant_id=tenant_id,
+                result="DENIED",
+                changed_fields=_DISPLAY_NAME_FIELDS,
+                reason=CLIENT_TENANT_ID_IGNORED,
+            )
+        changed = (
+            session.connection()
+            .execute(
+                update(table)
+                .where(
+                    table.c.id == tenant_id,
+                    table.c.display_name.is_distinct_from(display_name),
+                )
+                .values(display_name=display_name, updated_at=func.now())
+                .returning(table.c.id)
+            )
+            .first()
+            is not None
+        )
+        if changed:
+            _record_config_change(
+                session,
+                tenant_id=tenant_id,
+                result="SUCCESS",
+                changed_fields=_DISPLAY_NAME_FIELDS,
+            )
+    return TenantProfileRead(display_name=display_name)
+
+
+# --------------------------------------------------------------------------------------------
+# Step-up: a fresh factor for one operation on one resource (interim, ADR-F002)
+# --------------------------------------------------------------------------------------------
+#
+# `docs/features/02-authentication/03-design.md` "Step-up for the five named high-risk operations":
+# *"A step-up token is bound to user + session + operation + resource id, consumed on use, refused on
+# a different resource, and a failure is audited."* D-003 (the identity model: MFA, sessions) is open,
+# so the factor here is the interim ADR-F002 names - re-entering the account password - and the
+# server, not the browser, checks it. What D-003 changes is the factor (`_factor_verified`); the
+# grant, its binding and its consumption stay.
+#
+# Two deliberate deviations, recorded in the PR:
+#
+# - **Not bound to a session.** The platform issues stateless access tokens with no session record
+#   (D-003), so there is no session id to bind to. The grant is bound to the user, the operation and
+#   the resource, lives two minutes, and is spent once.
+# - **`403 STEP_UP_REQUIRED`, not `401`.** Feature 02 owns step-up and answers `403` with a challenge;
+#   features 10 and 11 write `401 step_up_required`. The client signs out on any `401`
+#   (`app.api.deps.get_current_user`), so a `401` would end the session of a clinician who mistyped a
+#   password. `STEP_UP_REQUIRED` is the code `identity_tenancy.router` already uses for the same refusal.
+
+STEP_UP_ACTION: Final[str] = "auth.step_up"
+STEP_UP_FAILED_ACTION: Final[str] = "auth.step_up_failed"
+STEP_UP_REQUIRED: Final[str] = "STEP_UP_REQUIRED"
+STEP_UP_FAILED: Final[str] = "STEP_UP_FAILED"
+# What the trail records as the factor, so nobody mistakes the interim for MFA (ADR-F002).
+STEP_UP_METHOD: Final[str] = "PASSWORD_REENTRY"
+
+
+def _token_hash(token: str) -> str:
+    """The only form of a step-up token the database ever holds."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _record_step_up(
+    session: Session,
+    *,
+    action: str,
+    result: str,
+    operation: str,
+    resource_id: uuid.UUID,
+    reason: str | None = None,
+) -> None:
+    payload: dict[str, str] = {"operation": operation}
+    if action == STEP_UP_ACTION:
+        payload["mfa_method"] = STEP_UP_METHOD
+    audit.record(
+        session,
+        audit.AuditEvent(
+            action=action,
+            result=result,
+            resource_id=resource_id,
+            reason=reason,
+            payload=payload,
+        ),
+    )
+
+
+def _factor_verified(session: Session, *, user_id: uuid.UUID, password: str) -> bool:
+    """Does `password` verify against this account's current hash? Constant-ish time either way.
+
+    The hash is read by primary key from the session's own account. A rehash suggested by the hasher
+    is **not** written here: a step-up must not change the credential it is checking.
+    """
+    user = session.get(User, user_id)
+    hashed = user.hashed_password if user is not None and user.is_active else None
+    verified, _rehash = verify_password(password, hashed or DUMMY_HASH)
+    return verified and hashed is not None
+
+
+def issue_step_up(
+    *,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    actor_role: str | None,
+    password: str,
+    operation: str,
+    resource_id: uuid.UUID,
+) -> StepUpGrantRead | None:
+    """Check the factor and, on success, store a grant and return its token. `None` is a refusal.
+
+    Both outcomes are audited on the transaction that decides them: `auth.step_up` with the method,
+    or `auth.step_up_failed` with the operation. The refusal commits (it is returned, not raised), so
+    a guessing attack leaves its trail even though the caller is told nothing beyond "not verified".
+    """
+    with tenant_transaction(
+        tenant_id=tenant_id, actor_id=user_id, actor_role=actor_role
+    ) as session:
+        if not _factor_verified(session, user_id=user_id, password=password):
+            _record_step_up(
+                session,
+                action=STEP_UP_FAILED_ACTION,
+                result="DENIED",
+                operation=operation,
+                resource_id=resource_id,
+                reason=STEP_UP_FAILED,
+            )
+            return None
+        token = secrets.token_urlsafe(32)
+        table = StepUpGrant.metadata.tables[StepUpGrant.__tablename__]
+        expires_at = (
+            session.connection()
+            .execute(
+                insert(table)
+                .values(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    operation=operation,
+                    resource_id=resource_id,
+                    token_hash=_token_hash(token),
+                    # The database clock decides both ends, so the window cannot be widened by an
+                    # application instance whose clock is ahead.
+                    issued_at=func.now(),
+                    expires_at=func.now()
+                    + text(f"interval '{STEP_UP_MAX_LIFETIME_SECONDS} seconds'"),
+                )
+                .returning(table.c.expires_at)
+            )
+            .scalar_one()
+        )
+        _record_step_up(
+            session,
+            action=STEP_UP_ACTION,
+            result="SUCCESS",
+            operation=operation,
+            resource_id=resource_id,
+        )
+        return StepUpGrantRead(
+            step_up_token=token,
+            operation=operation,
+            resource_id=resource_id,
+            expires_at=expires_at,
+        )
+
+
+def consume_step_up(
+    session: Session,
+    *,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    operation: str,
+    resource_id: uuid.UUID,
+    token: str | None,
+) -> bool:
+    """Spend a grant on the **caller's** transaction. `True` exactly once per grant.
+
+    One conditional `UPDATE`: the row must be this tenant's, this user's, for this operation and this
+    resource, unspent, and unexpired by the database clock. Two concurrent spends of one token
+    serialise on the row and the second matches nothing. The spend commits or rolls back with the
+    operation it authorised, so an operation that fails with an error leaves the grant usable for its
+    retry, and one that is refused (a committed refusal) spends it.
+
+    A refusal is audited here, as `auth.step_up_failed` with `STEP_UP_REQUIRED`.
+    """
+    spent = False
+    if token:
+        table = StepUpGrant.metadata.tables[StepUpGrant.__tablename__]
+        spent = (
+            session.connection()
+            .execute(
+                update(table)
+                .where(
+                    table.c.token_hash == _token_hash(token),
+                    table.c.tenant_id == tenant_id,
+                    table.c.user_id == user_id,
+                    table.c.operation == operation,
+                    table.c.resource_id == resource_id,
+                    table.c.consumed_at.is_(None),
+                    table.c.expires_at > func.now(),
+                )
+                .values(consumed_at=func.now())
+                .returning(table.c.id)
+            )
+            .first()
+            is not None
+        )
+    if not spent:
+        _record_step_up(
+            session,
+            action=STEP_UP_FAILED_ACTION,
+            result="DENIED",
+            operation=operation,
+            resource_id=resource_id,
+            reason=STEP_UP_REQUIRED,
+        )
+    return spent

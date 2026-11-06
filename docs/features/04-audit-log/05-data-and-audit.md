@@ -1,0 +1,156 @@
+---
+doc_id: FEAT-AUD-05
+title: Audit log, data and audit
+owner: Security Lead
+status: DRAFT
+last_reviewed: 2026-10-04
+classification: RESTRICTED
+related: 07-audit-architecture, 12-data-classification, 14-retention-and-deletion
+source:
+  - Privacy Act 1988 (Cth), APP 11
+  - clinic-os-secure-by-design/07-audit-architecture.md §1, §2, §7, §9, §10
+  - clinic-os-secure-by-design/12-data-classification.md §1, §3, §4
+  - clinic-os-secure-by-design/13-data-residency.md §3, §6
+  - clinic-os-secure-by-design/14-retention-and-deletion.md §3.3, §3.5, §3.6
+repo_docs:
+  - 01-requirements.md
+  - 03-design.md
+  - 04-threat-model.md
+  - 06-test-plan.md
+---
+
+# Data and audit
+
+## Field classification
+
+Levels are from doc 12 §1, which defines **seven**: `PUBLIC`, `INTERNAL`, `CONFIDENTIAL`, `SENSITIVE`,
+`HEALTH_INFORMATION`, `HIGHLY_SENSITIVE`, `SECRET`. Doc 12 §3 places audit events at **SENSITIVE**:
+information whose disclosure harms an individual or a clinic and that is not itself health information.
+`resource_id` is the exception — it points at a clinical object and is `HEALTH_INFORMATION`.
+
+| Field | Level | Log | Audit | Analytics | Non-prod | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `event_id` | SENSITIVE | yes | yes | never | synthetic | assigned by the writer |
+| `timestamp` | SENSITIVE | yes | yes | aggregate only | synthetic | timeline evidence |
+| `tenant_id` | SENSITIVE | yes | yes | aggregate only | de-identified | isolation key, never a secret |
+| `actor_id` | SENSITIVE | pseud | yes | never | synthetic | workforce identity; `SYSTEM` for jobs |
+| `actor_role` | SENSITIVE | yes | yes | aggregate only | synthetic | role at decision time |
+| `action` | SENSITIVE | yes | yes | aggregate only | synthetic | from the catalogue below |
+| `resource_type` | SENSITIVE | yes | yes | aggregate only | synthetic | |
+| `resource_id` | HEALTH_INFORMATION | pseud | yes | never | synthetic | points at a clinical object |
+| `result` | SENSITIVE | yes | yes | aggregate only | synthetic | allow, deny or failure |
+| `reason` | SENSITIVE | **never** | yes | never | synthetic | may contain typed justification; captured, never logged |
+| `source_ip` | SENSITIVE | yes | yes | never | synthetic | personal information in some contexts |
+| `request_id` | INTERNAL | yes | yes | never | synthetic | joins log line to event |
+| `correlation_id` | INTERNAL | yes | yes | never | synthetic | cross-service intent |
+| `prev_hash`, `hash` | INTERNAL | yes | yes | never | synthetic | tamper evidence |
+| `metadata` (per action) | allow-listed | no | allow-listed keys only | never | synthetic | new key is a deliberate change with a test |
+
+## What may never be in an audit payload
+
+Never: clinical narrative, medicine or dose text, diagnosis codes, Medicare numbers, Individual
+Healthcare Identifiers, full prescriptions, OCR text from ingested documents, document bodies, secrets,
+tokens, session identifiers, **or a full request body from a clinical endpoint**. The `metadata` object
+is allow-listed by key in code, so a new key is a deliberate change with a test (doc 07 §7, §11).
+`HIGHLY_SENSITIVE` and `SECRET` values never reach the audit payload in any form; the action is recorded
+and the value is not (doc 12 §4).
+
+## Residency
+
+The trail is stored in `ap-southeast-2` and streamed to an S3 Object Lock bucket in the same region
+(`13 §6` DR-11). Sensitive healthcare information stays in Australia: region pinning by configuration,
+and no resource may hard-code another region. No third party receives audit data in the MVP.
+
+## The action catalogue (doc 07 §1)
+
+The canonical action name is the value in the `action` field, **lowercase dotted form** (doc 07 §2).
+This list is closed:
+
+| Resource type | Actions |
+| --- | --- |
+| `SESSION` | `auth.login`, `auth.logout`, `auth.login_failed`, `auth.step_up`, `auth.step_up_failed` |
+| `PATIENT` | `patient.read`, `patient.create`, `patient.update`, `patient.export`, `care_relationship.create`, `care_relationship.end` |
+| `CLINICAL_RECORD` | `clinical_record.read`, `clinical_record.write` |
+| `PRESCRIPTION` | `prescription.create`, `prescription.read`, `prescription.modify`, `prescription.sign`, `prescription.dispatch`, `prescription.dispatch_blocked`, `prescription.reject`, `prescription.dispatch_failed` |
+| `TGA_APPROVAL` | `tga_approval.create`, `tga_approval.modify`, `tga_approval.state_change`, `tga_approval.match`, `tga_approval.verify`, `tga_approval.read` |
+| `TGA_DOCUMENT` | `tga_document.ingest`, `tga_document.extract` |
+| `USER` | `user.permission_change`, `user.create`, `user.deactivate` |
+| `TENANT` | `tenant.security_config_change`, `tenant.config_changed` |
+| `INTEGRATION` | `integration.request` |
+| `AUDIT` | `audit.read` |
+| `APPOINTMENT` | `appointment.create`, `appointment.state_change`, `appointment.read` |
+
+**No new action name may be invented.** A new action must be registered in doc 07 §1 first, by a change
+to the source contract, before any code emits it.
+
+**Registered 2026-10-07 (owner decision, M2 phase 2A): `tga_approval.read`.** Feature 08 names
+`approval.read` ("patient-level read: actor, role, patient_id, count") and the catalogue had no TGA read
+action, so TGA reads and read refusals went unaudited. It is registered in the catalogue's lowercase
+dotted form, the same mapping already applied to `approval.created` -> `tga_approval.create`. It may
+carry `patient_id` and `result_count` (a patient-level read) or `query_filters` and `result_count` (the
+practice-wide register, `GET /api/v1/tga-approvals`), and nothing else
+(`backend/app/modules/audit/actions.py`). A missing mandatory event is a defect, and an event
+coverage test asserts the list.
+
+`APPOINTMENT` and its two actions were registered on 2026-10-07 by the owner, with the appointments
+module (`docs2/sdlc/04-calendar-and-booking/api.md`): `appointment.create` carries `patient_id` and
+`source` (`STAFF` or `PUBLIC_BOOKING`), `appointment.state_change` carries `from_state` and
+`to_state` (status codes). No time, name or contact detail is ever in either payload.
+
+Four actions were registered on 2026-10-08 with task T1-34 (decision D-007), each listed under
+"Controls changed" in its PR: `prescription.read` (`11-prescribing/02-user-stories.md`: "`prescription.read`-class
+access recorded per patient, not per row") and `appointment.read` (the booking reads
+`docs2/sdlc/04-calendar-and-booking/api.md` deferred "with `patient.read` (T1-34)") carry `patient_id`,
+`care_relationship_id` and `purpose` on a patient-level read, `query_filters` (kinds only) and
+`result_count` on a practice-wide one; `care_relationship.create` (`care_relationship_id`,
+`target_user_id`, `source`) and `care_relationship.end` (`care_relationship_id`, `target_user_id`)
+record the interim care-team upkeep, with the patient as the resource. `tga_approval.read` gained
+`care_relationship_id` and `purpose` for a patient-level read. On the same date (decision D-010)
+`prescription.modify` gained its payload row (`patient_id`, `changed_fields` - names only - and, on an
+addendum's new version, `supersedes_id`) and `prescription.reject` its (`patient_id`, `from_state`; the
+cancel reason code is the envelope's `reason`).
+
+**Registered 2026-10-08 (Milestone 4, clinic display name): `tenant.config_changed`.** Feature 01
+names it (`01-tenancy-and-clinics/05-data-and-audit.md`, "Audit events emitted") and the catalogue had
+no action for a tenant setting that is not a security setting. It carries `changed_fields` (field names
+only, e.g. `["display_name"]`) and `step_up`, and nothing else (`backend/app/modules/audit/actions.py`).
+Feature 01 describes the event as "a security setting change with step-up"; the display name is not a
+security setting and is written with `step_up: false`. Since the same date it also records a change to the clinic's
+opening hours or slot length (`changed_fields`: `hours`, `slot_minutes`;
+`docs2/sdlc/04-calendar-and-booking/api.md`), and each booking email sent is one
+`integration.request` (`provider: SMTP`, `outcome_class`), the existing action for an outbound provider
+call: no further action was added. That widening is recorded here and in
+`docs2/sdlc/01-auth-and-shell/api.md` for the Security Lead to confirm (OPEN until confirmed).
+
+Events beyond the envelope carry the mandatory per-action fields from doc 07 §1 — for example
+`prescription.dispatch_blocked` carries `block_reason` and `approval_id`, and `audit.read` carries
+`query_filters` and `result_count`.
+
+## Retention
+
+The obligation to hold access records is *Privacy Act 1988* (Cth) APP 11 (security of personal
+information, including the access-accounting expectation) and the state and territory health records
+legislation. Status: **REQUIRES LEGAL/REGULATORY VALIDATION** with the Head of Legal and Compliance; this
+document does not choose a period. The mechanism is: an `audit_log` partition per month, an Object Lock
+retention period per partition, and a partition-drop job that runs only after the retention period has
+elapsed and no legal hold applies. Deletion of a single audit event is not a feature; expiry is the only
+removal mechanism, and it operates on whole partitions.
+
+| Record class | Working assumption (design only, not a decision) | Source |
+| --- | --- | --- |
+| Health-record-linked audit events | 7 years | `07 §4` — marked REQUIRES LEGAL/REGULATORY VALIDATION |
+| Purely authentication events | 12 months | `07 §4` — marked REQUIRES LEGAL/REGULATORY VALIDATION |
+
+A deletion request cannot delete the audit event that recorded the request: the trail is the evidence
+that the request was handled (doc 14 §3.5). A hold is a recorded decision with a scope, a reason, an
+owner and a 90-day review; it blocks partition drop, and release resumes the next run (doc 14 §3.6).
+
+## Open items
+
+| Item | Owner | Status |
+| --- | --- | --- |
+| Retention period per event class and per jurisdiction | Head of Legal and Compliance | **REQUIRES LEGAL/REGULATORY VALIDATION** |
+| Action-name convention: doc 07 §1 lowercase dotted vs doc 04 §3.10 `PATIENT_READ` | Security Lead | OPEN — doc 07 adopted |
+| `record.purged` appears in `14 §3.3` but is **not** in the doc 07 §1 catalogue; the certificate needs a registered action | Head of Legal and Compliance + Security Lead | OPEN — no action may be invented |
+| Doc 21 §4 names operations in prose (`webhook receipt`, `dispatch confirmation`, `reconciliation outcome`) that have no doc 07 §1 action name | CTO | OPEN |
+| `reason` classification: `HIGHLY_SENSITIVE` in doc 04 §3.10 vs `SENSITIVE` in doc 12 §3 — this doc applies `SENSITIVE` but never logs it | Privacy Officer | OPEN |

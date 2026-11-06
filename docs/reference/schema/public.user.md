@@ -1,0 +1,209 @@
+# public.user
+
+## Columns
+
+| Name | Type | Default | Nullable | Children | Parents | Comment |
+| ---- | ---- | ------- | -------- | -------- | ------- | ------- |
+| created_at | timestamp with time zone |  | true |  |  |  |
+| email | varchar(255) |  | false |  |  |  |
+| full_name | varchar(255) |  | true |  |  |  |
+| hashed_password | varchar |  | false |  |  |  |
+| id | uuid |  | false | [public.care_relationships](public.care_relationships.md) [public.clinical_record_versions](public.clinical_record_versions.md) [public.clinical_records](public.clinical_records.md) [public.practitioner_agreements](public.practitioner_agreements.md) [public.practitioner_identifiers](public.practitioner_identifiers.md) [public.sop_acknowledgements](public.sop_acknowledgements.md) [public.sop_versions](public.sop_versions.md) [public.sops](public.sops.md) [public.staff_invitations](public.staff_invitations.md) [public.step_up_grants](public.step_up_grants.md) [public.tenant_settings](public.tenant_settings.md) [public.user_roles](public.user_roles.md) |  |  |
+| is_active | boolean |  | false |  |  |  |
+| is_superuser | boolean |  | false |  |  |  |
+| tenant_id | uuid |  | true |  | [public.tenants](public.tenants.md) |  |
+
+## Constraints
+
+| Name | Type | Definition |
+| ---- | ---- | ---------- |
+| fk_user_tenant_id_tenants | FOREIGN KEY | FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL |
+| pk_user | PRIMARY KEY | PRIMARY KEY (id) |
+| user_email_not_null | n | NOT NULL email |
+| user_hashed_password_not_null | n | NOT NULL hashed_password |
+| user_is_active_not_null | n | NOT NULL is_active |
+| user_is_superuser_not_null | n | NOT NULL is_superuser |
+| user_new_id_not_null | n | NOT NULL id |
+
+## Indexes
+
+| Name | Definition |
+| ---- | ---------- |
+| ix_user_email | CREATE UNIQUE INDEX ix_user_email ON public."user" USING btree (email) |
+| ix_user_tenant_id | CREATE INDEX ix_user_tenant_id ON public."user" USING btree (tenant_id) |
+| pk_user | CREATE UNIQUE INDEX pk_user ON public."user" USING btree (id) |
+
+## Relations
+
+```mermaid
+erDiagram
+
+"public.care_relationships" }o--|| "public.user" : "FOREIGN KEY (practitioner_id) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.clinical_record_versions" }o--|| "public.user" : "FOREIGN KEY (author_id) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.clinical_records" }o--|| "public.user" : "FOREIGN KEY (author_id) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.practitioner_agreements" }o--|| "public.user" : "FOREIGN KEY (attested_by) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.practitioner_agreements" }o--|| "public.user" : "FOREIGN KEY (user_id) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.practitioner_identifiers" }o--|| "public.user" : "FOREIGN KEY (updated_by) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.practitioner_identifiers" }o--|| "public.user" : "FOREIGN KEY (user_id) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.practitioner_identifiers" }o--o| "public.user" : "FOREIGN KEY (verified_by) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.sop_acknowledgements" }o--|| "public.user" : "FOREIGN KEY (user_id) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.sop_versions" }o--|| "public.user" : "FOREIGN KEY (published_by) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.sops" }o--|| "public.user" : "FOREIGN KEY (created_by) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.staff_invitations" }o--|| "public.user" : "FOREIGN KEY (invited_by) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.staff_invitations" |o--|| "public.user" : "FOREIGN KEY (user_id) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.step_up_grants" }o--|| "public.user" : "FOREIGN KEY (user_id) REFERENCES #quot;user#quot;(id) ON DELETE CASCADE"
+"public.tenant_settings" }o--|| "public.user" : "FOREIGN KEY (updated_by) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.user_roles" }o--|| "public.user" : "FOREIGN KEY (granted_by) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.user_roles" }o--|| "public.user" : "FOREIGN KEY (user_id) REFERENCES #quot;user#quot;(id) ON DELETE RESTRICT"
+"public.user" }o--o| "public.tenants" : "FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL"
+
+"public.user" {
+  timestamp_with_time_zone created_at
+  varchar_255_ email
+  varchar_255_ full_name
+  varchar hashed_password
+  uuid id
+  boolean is_active
+  boolean is_superuser
+  uuid tenant_id FK
+}
+"public.care_relationships" {
+  timestamp_with_time_zone active_from
+  timestamp_with_time_zone active_to
+  uuid clinic_id FK
+  timestamp_with_time_zone created_at
+  uuid id
+  uuid patient_id FK
+  uuid practitioner_id FK
+  varchar_128_ source
+  uuid tenant_id FK
+  timestamp_with_time_zone updated_at
+}
+"public.clinical_record_versions" {
+  uuid author_id FK
+  varchar body
+  varchar body_format
+  uuid clinical_record_id FK
+  timestamp_with_time_zone created_at
+  uuid id
+  varchar reason
+  varchar signature_digest
+  timestamp_with_time_zone signed_at
+  integer supersedes_version
+  uuid tenant_id FK
+  integer version
+}
+"public.clinical_records" {
+  uuid author_id FK
+  timestamp_with_time_zone created_at
+  integer current_version
+  timestamp_with_time_zone deleted_at
+  uuid id
+  uuid patient_id FK
+  varchar record_type
+  timestamp_with_time_zone signed_at
+  uuid tenant_id FK
+}
+"public.practitioner_agreements" {
+  varchar_32_ agreement_version
+  timestamp_with_time_zone attested_at
+  uuid attested_by FK
+  uuid id
+  date signed_on
+  uuid tenant_id FK
+  uuid user_id FK
+}
+"public.practitioner_identifiers" {
+  date expires_on
+  uuid id
+  varchar kind
+  varchar status
+  uuid tenant_id FK
+  timestamp_with_time_zone updated_at
+  uuid updated_by FK
+  uuid user_id FK
+  bytea value_ciphertext
+  varchar_120_ verification_method
+  timestamp_with_time_zone verified_at
+  uuid verified_by FK
+}
+"public.sop_acknowledgements" {
+  timestamp_with_time_zone acknowledged_at
+  uuid id
+  uuid sop_id FK
+  uuid tenant_id FK
+  uuid user_id FK
+  integer version FK
+}
+"public.sop_versions" {
+  text body
+  uuid id
+  timestamp_with_time_zone published_at
+  uuid published_by FK
+  uuid sop_id FK
+  uuid tenant_id FK
+  varchar_200_ title
+  integer version
+}
+"public.sops" {
+  text__ applies_to_roles
+  timestamp_with_time_zone created_at
+  uuid created_by FK
+  integer current_version
+  uuid id
+  boolean required_for_onboarding
+  uuid tenant_id FK
+  varchar_200_ title
+  timestamp_with_time_zone updated_at
+}
+"public.staff_invitations" {
+  timestamp_with_time_zone accepted_at
+  timestamp_with_time_zone created_at
+  timestamp_with_time_zone expires_at
+  uuid invited_by FK
+  varchar_64_ pending_password_digest
+  timestamp_with_time_zone sent_at
+  uuid tenant_id FK
+  uuid user_id FK
+}
+"public.step_up_grants" {
+  timestamp_with_time_zone consumed_at
+  timestamp_with_time_zone expires_at
+  uuid id
+  timestamp_with_time_zone issued_at
+  varchar operation
+  uuid resource_id
+  uuid tenant_id FK
+  varchar token_hash
+  uuid user_id FK
+}
+"public.tenant_settings" {
+  integer adult_retention_years
+  uuid tenant_id FK
+  timestamp_with_time_zone updated_at
+  uuid updated_by FK
+}
+"public.user_roles" {
+  timestamp_with_time_zone granted_at
+  uuid granted_by FK
+  timestamp_with_time_zone last_reviewed_at
+  uuid role_id FK
+  uuid tenant_id FK
+  uuid user_id FK
+}
+"public.tenants" {
+  timestamp_with_time_zone created_at
+  varchar_32_ data_region
+  varchar_120_ display_name
+  uuid id
+  varchar_255_ legal_name
+  varchar_64_ retention_profile
+  varchar_64_ slug
+  varchar_16_ status
+  timestamp_with_time_zone updated_at
+}
+```
+
+---
+
+> Generated by [tbls](https://github.com/k1LoW/tbls)
