@@ -22,7 +22,6 @@ from app.modules.audit.models import AuditLogEntry
 from app.modules.care_relationships.models import CareRelationship
 from app.modules.clinics.models import Clinic
 from app.modules.identity_tenancy.models import StepUpGrant, Tenant
-from app.modules.intake.models import IntakeApplication, PatientConsent, Pharmacy
 from app.modules.patients.models import (
     Patient,
     PatientAlert,
@@ -53,10 +52,7 @@ __all__ = [
     "AuditLogEntry",
     "CareRelationship",
     "Clinic",
-    "IntakeApplication",
     "Patient",
-    "PatientConsent",
-    "Pharmacy",
     "PatientAlert",
     "PatientEmergencyContact",
     "Permission",

@@ -82,8 +82,6 @@ from app.modules.appointments.schemas import (
 )
 from app.modules.identity_tenancy import service as identity_tenancy
 from app.modules.identity_tenancy.schemas import PublicClinicRead
-from app.modules.intake import service as intake
-from app.modules.intake.schemas import IntakeForm
 from app.modules.users_roles.catalog import (
     APPOINTMENT_PERMISSIONS,
     EMAIL_NOT_CONFIGURED,
@@ -302,23 +300,6 @@ def read_public_clinic(*, session: SessionDep, clinic_slug: str) -> PublicClinic
     if clinic is None:
         raise _clinic_not_found()
     return clinic
-
-
-@public_router.get(
-    "/{clinic_slug}/intake-form",
-    response_model=IntakeForm,
-    dependencies=[Depends(public_slots_rate_limit)],
-    responses={404: {"description": "No such clinic, or not taking bookings"}},
-)
-def read_intake_form(*, tenant_id: ClinicDep) -> IntakeForm:
-    """The application's consents (current versions) and partner pharmacies. Unauthenticated.
-
-    No product or brand name, no patient data: only what the public page shows (docs3 feature 03).
-    """
-    with tenant_transaction(
-        tenant_id=tenant_id, actor_role="PUBLIC_BOOKING"
-    ) as session:
-        return intake.intake_form(session, tenant_id=tenant_id)
 
 
 @public_router.get(
