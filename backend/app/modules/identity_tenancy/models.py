@@ -95,21 +95,17 @@ class Tenant(SQLModel, table=True):
 
 
 # The operations a step-up grant can authorise. Closed, like every vocabulary that gates an action:
-# `docs/features/02-authentication/03-design.md` "Step-up for the five named high-risk operations"
-# binds a token to one operation, and only the two prescription operations have a route that consumes
-# one today. A third operation is added here, in the check constraint and in the route that spends it.
-# `practitioner.identifier_update` (docs3 feature 02, R11): a change to a prescriber's credential
-# vault, bound to the practitioner whose identifier changes.
+# a grant is bound to one operation on one resource, so it cannot be spent on anything else. A new
+# operation is added here (the check constraint follows), in `StepUpRequest`, and in the route that
+# spends it. Exporting contacts is the first sensitive action Notify gates this way.
 STEP_UP_OPERATIONS: tuple[str, ...] = (
-    "prescription.sign",
-    "prescription.dispatch",
-    "practitioner.identifier_update",
+    "contact.export",
+    "integration.disconnect",
 )
 _STEP_UP_OPERATION_SQL = ", ".join(f"'{operation}'" for operation in STEP_UP_OPERATIONS)
 
-# The longest a grant may live, enforced by the database as well as by the service. Two minutes is
-# the step-up window `02-authentication/03-design.md` gives sign and dispatch ("2 min, single use");
-# OPEN-5 there records doc 06's 2 minutes against D-003 Option B's 5, and the shorter is the fail-safe.
+# The longest a grant may live (single use, two minutes), enforced by the database as well as by the
+# service.
 STEP_UP_MAX_LIFETIME_SECONDS: int = 120
 
 

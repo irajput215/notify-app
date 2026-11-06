@@ -7,16 +7,16 @@ Rules this module holds to, the same ones every clinical module does:
 - **Every query runs inside `tenant_transaction(...)`**, and every query also carries
   `tenant_id = :tenant_id` as a second line of defence below the forced RLS policy.
 - **The other modules are reached through their facades**: the practitioner roster through
-  `users_roles.service.active_staff_holding`, patient names and the public booking's patient through
-  `patients.service`, both on this module's own transaction so a booking and what it depends on are
+  `users_roles.service.active_staff_holding`, contact names and the public booking's contact through
+  `contacts.service`, both on this module's own transaction so a booking and what it depends on are
   one snapshot.
-- **Audit in the same transaction (INV-4)**: `appointment.create` with the patient and the source,
-  `appointment.state_change` with the two status codes. The public page's new patient is
-  `patient.create`, written by the patients module on the same transaction. Nothing clinical, no name,
+- **Audit in the same transaction (INV-4)**: `appointment.create` with the contact and the source,
+  `appointment.state_change` with the two status codes. The public page's new contact is
+  `contact.create`, written by the contacts module on the same transaction. Nothing clinical, no name,
   no time and no contact detail ever reaches a payload.
 - **No PHI in a refusal (INV-5)**. R3 asks that an overlap refusal *"names the clash"*; it names the
-  practitioner and the clashing **time**, never the other patient. `docs/` wins over the preview's
-  wording, which named the patient.
+  practitioner and the clashing **time**, never the other contact. `docs/` wins over the preview's
+  wording, which named the contact.
 - **Times are Australia/Sydney (R7), on the database clock.** The slot grid, "today" and the 18+
   check are computed by PostgreSQL `AT TIME ZONE`, so they do not depend on the server's zone or on a
   timezone database being installed in the image.
@@ -61,41 +61,35 @@ from app.modules.appointments.schemas import (
     PublicSlot,
 )
 from app.modules.audit import service as audit
-from app.modules.care_relationships import service as care
-from app.modules.patients import service as patients
+from app.modules.contacts import service as contacts
 from app.modules.users_roles import service as users_roles
 from app.modules.users_roles.catalog import (
     CLIENT_TENANT_ID_IGNORED,
     PRACTITIONER_ROLE_BY_CODE,
 )
-from app.modules.users_roles.policy import Actor, Decision
+from app.modules.users_roles.policy import Actor
 
 TIMEZONE: Final[str] = "Australia/Sydney"
 # The public page offers the next 14 days (contract), starting tomorrow: a same-day online booking
-# leaves the clinic no time to see the intake before the patient arrives.
+# leaves the clinic no time to see the intake before the contact arrives.
 PUBLIC_HORIZON_DAYS: Final[int] = 14
 # The calendar's widest read: a week view needs 5 days, a month is the ceiling.
 MAX_RANGE: Final[timedelta] = timedelta(days=31)
-# R5: online booking is for adults.
-MINIMUM_BOOKING_AGE: Final[int] = 18
-# A patient's appointment history, newest first, bounded.
-MAX_PATIENT_HISTORY: Final[int] = 200
+# A contact's appointment history, newest first, bounded.
+MAX_CONTACT_HISTORY: Final[int] = 200
 
 APPOINTMENT_CREATE: Final[str] = "appointment.create"
 APPOINTMENT_STATE_CHANGE: Final[str] = "appointment.state_change"
-# Registered with T1-34: every read of bookings is audited, a patient's with the relationship and the
-# purpose, the calendar's and the Today page's with the kinds of filter and the row count.
+# Every read of bookings is audited: a contact's with the row count, the calendar's with the kinds of
+# filter and the row count.
 APPOINTMENT_READ: Final[str] = "appointment.read"
-# The permission a patient's bookings are read under, and the rule is decided for (a booking is part
-# of the patient's record: `APPOINTMENT_PERMISSIONS["read"]` is `patient:read`).
-_PATIENT_READ: Final[str] = "patient:read"
-# The audit `reason` for a patient that is not the caller's own (the clinical-records trail's code).
+# The audit `reason` for a contact that is not the caller's own (the same code the contacts module uses).
 NOT_FOUND_REASON: Final[str] = "AUTHZ_DENIED_CROSS_TENANT"
 
 # Refusal codes, each with one status (`detail.code` in the RFC 7807 body).
 APPOINTMENT_NOT_FOUND: Final[str] = "APPOINTMENT_NOT_FOUND"
-PATIENT_NOT_FOUND: Final[str] = "PATIENT_NOT_FOUND"
-PATIENT_BLOCKED: Final[str] = "PATIENT_BLOCKED"
+CONTACT_NOT_FOUND: Final[str] = "CONTACT_NOT_FOUND"
+CONTACT_BLOCKED: Final[str] = "CONTACT_BLOCKED"
 PRACTITIONER_NOT_FOUND: Final[str] = "PRACTITIONER_NOT_FOUND"
 TYPE_NOT_OFFERED: Final[str] = "TYPE_NOT_OFFERED"
 APPOINTMENT_OVERLAP: Final[str] = "APPOINTMENT_OVERLAP"
@@ -103,11 +97,10 @@ ILLEGAL_STATE_TRANSITION: Final[str] = "ILLEGAL_STATE_TRANSITION"
 INVALID_RANGE: Final[str] = "INVALID_RANGE"
 SLOT_NOT_OFFERED: Final[str] = "SLOT_NOT_OFFERED"
 SLOT_TAKEN: Final[str] = "SLOT_TAKEN"
-BOOKING_AGE_NOT_MET: Final[str] = "BOOKING_AGE_NOT_MET"
 
 OVERLAP_CONSTRAINT: Final[str] = "no_overlapping_appointments"
 
-_ROLE_LABEL: Final[dict[str, str]] = {"DOCTOR": "doctor", "NURSE": "nurse"}
+_ROLE_LABEL: Final[dict[str, str]] = {"STAFF": "team member"}
 
 
 class AppointmentRefused(Exception):
@@ -172,21 +165,16 @@ DEFAULT_AVAILABILITY: Final[Availability] = Availability(
 
 
 def _roster(session: Session, *, tenant_id: uuid.UUID) -> list[PractitionerRead]:
-    """Bookable staff: active accounts holding a Doctor, Authorised Prescriber or Nurse role.
+    """Bookable staff: active accounts holding a bookable role (`PRACTITIONER_ROLE_BY_CODE`).
 
-    One account holding several of those roles is listed once, as a doctor if any of its roles is a
-    doctor's. `name` falls back to the email for an account with no full name (staff-only screen);
-    `title` is the display name of the role the practitioner is booked as.
+    One account holding several of those roles is listed once. `name` falls back to the email for an
+    account with no full name (staff-only screen); `title` is the display name of a role it holds.
     """
     roster: list[PractitionerRead] = []
     for member in users_roles.active_staff_holding(
         session, tenant_id=tenant_id, role_codes=PRACTITIONER_ROLE_BY_CODE
     ):
-        role: Literal["DOCTOR", "NURSE"] = (
-            "DOCTOR"
-            if any(PRACTITIONER_ROLE_BY_CODE[code] == "DOCTOR" for code in member.roles)
-            else "NURSE"
-        )
+        role: Literal["STAFF"] = "STAFF"
         title = next(
             name
             for code, name in sorted(member.roles.items())
@@ -219,9 +207,9 @@ def _convert(
         AppointmentRead.model_validate(
             {
                 "id": row.id,
-                "patient_id": row.patient_id,
-                # A patient record that is no longer live keeps its bookings readable, unnamed.
-                "patient_name": names.get(row.patient_id, "Patient record unavailable"),
+                "contact_id": row.contact_id,
+                # A contact record that is no longer live keeps its bookings readable, unnamed.
+                "contact_name": names.get(row.contact_id, "Contact unavailable"),
                 "practitioner_id": row.practitioner_id,
                 "type": row.type,
                 "status": row.status,
@@ -239,8 +227,8 @@ def _reads(
     session: Session, *, tenant_id: uuid.UUID, rows: Sequence[Appointment]
 ) -> list[AppointmentRead]:
     batch = ReadBatch()
-    names = patients.queue_display_names(
-        batch, tenant_id=tenant_id, patient_ids=[row.patient_id for row in rows]
+    names = contacts.queue_display_names(
+        batch, tenant_id=tenant_id, contact_ids=[row.contact_id for row in rows]
     )
     batch.send(session)
     return _convert(rows, names.value)
@@ -305,22 +293,20 @@ def read_event(
 
 
 @dataclass(frozen=True)
-class PatientBookings:
-    """A patient's bookings, or why not: `found=False` is `404`; `decision` is the `403`."""
+class ContactBookings:
+    """A contact's bookings, or `found=False` (`404`)."""
 
     found: bool
     bookings: list[AppointmentRead]
-    decision: Decision | None = None
 
 
-def list_for_patient(
-    *, actor: Actor, patient_id: uuid.UUID, source_ip: str | None = None
-) -> PatientBookings:
-    """One patient's bookings, newest first, under the treating-relationship rule (T1-34).
+def list_for_contact(
+    *, actor: Actor, contact_id: uuid.UUID, source_ip: str | None = None
+) -> ContactBookings:
+    """One contact's bookings, newest first.
 
-    Not found (absent, or another tenant's) and refused (a relationship-bound grant without an active
-    care relationship) are both audited `DENIED`; a read is audited `SUCCESS` with the relationship id,
-    the purpose and the row count.
+    Not found (absent, or another workspace's) is audited `DENIED`; a read is audited `SUCCESS` with
+    the row count. The permission was decided by the router.
     """
     tenant_id = actor.tenant_id
     with tenant_transaction(
@@ -329,24 +315,20 @@ def list_for_patient(
         actor_role=actor.actor_role,
         source_ip=source_ip,
     ) as session:
-        # The patient's name, the actor's relationship with it and its bookings in one flight. The
-        # bookings are only returned once the patients facade has answered that the patient is this
-        # tenant's own and live, and the policy layer has allowed the read.
+        # The contact's name and its bookings in one flight. The bookings are only returned once the
+        # contacts facade has answered that the contact is this workspace's own and live.
         batch = ReadBatch()
-        names = patients.queue_display_names(
-            batch, tenant_id=tenant_id, patient_ids=[patient_id]
-        )
-        relationship = batch.scalars(
-            select(care.actor_relationship_id(actor, patient_id))
+        names = contacts.queue_display_names(
+            batch, tenant_id=tenant_id, contact_ids=[contact_id]
         )
         rows = batch.scalars(
             select(Appointment)
             .where(
                 Appointment.tenant_id == tenant_id,
-                Appointment.patient_id == patient_id,
+                Appointment.contact_id == contact_id,
             )
             .order_by(col(Appointment.starts_at).desc(), col(Appointment.id))
-            .limit(MAX_PATIENT_HISTORY)
+            .limit(MAX_CONTACT_HISTORY)
         )
         batch.send(session)
 
@@ -356,41 +338,31 @@ def list_for_patient(
                 audit.AuditEvent(
                     action=APPOINTMENT_READ,
                     result="DENIED",
-                    resource_id=patient_id,
+                    resource_id=contact_id,
                     reason=reason,
                     source_ip=source_ip,
-                    payload={"patient_id": str(patient_id)},
+                    payload={"contact_id": str(contact_id)},
                 ),
             )
 
-        if patient_id not in names.value:
+        if contact_id not in names.value:
             denied(NOT_FOUND_REASON)
-            return PatientBookings(found=False, bookings=[])
-        access = care.patient_access(
-            actor,
-            _PATIENT_READ,
-            patient_id=patient_id,
-            care_relationship_id=relationship.value[0],
-        )
-        if not access.allowed:
-            denied(access.reason)
-            return PatientBookings(found=True, bookings=[], decision=access.decision)
+            return ContactBookings(found=False, bookings=[])
         bookings = _convert(rows.value, names.value)
         audit.record(
             session,
             audit.AuditEvent(
                 action=APPOINTMENT_READ,
                 result="SUCCESS",
-                resource_id=patient_id,
+                resource_id=contact_id,
                 source_ip=source_ip,
                 payload={
-                    "patient_id": str(patient_id),
+                    "contact_id": str(contact_id),
                     "result_count": len(bookings),
-                    **access.audit_payload(),
                 },
             ),
         )
-        return PatientBookings(found=True, bookings=bookings)
+        return ContactBookings(found=True, bookings=bookings)
 
 
 @dataclass(frozen=True)
@@ -446,7 +418,7 @@ def day_schedule_plan(*, tenant_id: uuid.UUID, day: ClinicDay) -> Plan[DaySchedu
 
     For the Today page (`dashboard` module), which runs every section's plan on one transaction, so
     the sections are one snapshot and share their round trips (`app.core.reads`): the bookings are
-    one step, the patients' and the practitioners' names the next. Cancelled and no-show bookings
+    one step, the contacts' and the practitioners' names the next. Cancelled and no-show bookings
     are listed too: the day's record is what happened, and `by_status` lets the screen count what is
     still to come.
     """
@@ -465,15 +437,15 @@ def day_schedule_plan(*, tenant_id: uuid.UUID, day: ClinicDay) -> Plan[DaySchedu
 
     rows = bookings.value
     second = ReadBatch()
-    patient_names = patients.queue_display_names(
-        second, tenant_id=tenant_id, patient_ids=[row.patient_id for row in rows]
+    contact_names = contacts.queue_display_names(
+        second, tenant_id=tenant_id, contact_ids=[row.contact_id for row in rows]
     )
     practitioner_names = users_roles.queue_display_names(
         second, tenant_id=tenant_id, user_ids=[row.practitioner_id for row in rows]
     )
     yield second
 
-    reads = _convert(rows, patient_names.value)
+    reads = _convert(rows, contact_names.value)
     by_status = dict.fromkeys(APPOINTMENT_STATUSES, 0)
     for read in reads:
         by_status[read.status] += 1
@@ -523,7 +495,7 @@ def _clash_message(
     starts_at: datetime,
     ends_at: datetime,
 ) -> str:
-    """R3 names the clash: who is busy, and when. Never the other patient (INV-5)."""
+    """R3 names the clash: who is busy, and when. Never the other contact (INV-5)."""
     clash = session.exec(
         select(Appointment)
         .where(
@@ -549,7 +521,7 @@ def _insert(
     session: Session,
     *,
     tenant_id: uuid.UUID,
-    patient_id: uuid.UUID,
+    contact_id: uuid.UUID,
     practitioner: PractitionerRead,
     appointment_type: str,
     starts_at: datetime,
@@ -568,7 +540,7 @@ def _insert(
     ends_at = starts_at + timedelta(minutes=minutes)
     appointment = Appointment(
         tenant_id=tenant_id,
-        patient_id=patient_id,
+        contact_id=contact_id,
         practitioner_id=practitioner.id,
         type=appointment_type,
         source=source,
@@ -605,7 +577,7 @@ def _insert(
             result="SUCCESS",
             resource_id=appointment.id,
             source_ip=source_ip,
-            payload={"patient_id": str(patient_id), "source": source},
+            payload={"contact_id": str(contact_id), "source": source},
         ),
     )
     _enqueue_notifications(
@@ -616,7 +588,7 @@ def _insert(
 
 
 # The booking emails (D-009), written on the booking's own transaction: a confirmation due now, and
-# a reminder due 24 hours before the start when that is still ahead. Nothing about the patient is
+# a reminder due 24 hours before the start when that is still ahead. Nothing about the contact is
 # stored here; the sender reads the address when it sends.
 REMINDER_LEAD: Final[timedelta] = timedelta(hours=24)
 _ENQUEUE_SQL = text(
@@ -682,23 +654,23 @@ def record_client_tenant_id_ignored(
 
 
 def create_appointment(*, actor: Actor, body: AppointmentCreate) -> AppointmentRead:
-    """Book a patient with a practitioner (staff). The server computes `ends_at` from the type."""
+    """Book a contact with a practitioner (staff). The server computes `ends_at` from the type."""
     tenant_id = actor.tenant_id
     with tenant_transaction(
         tenant_id=tenant_id, actor_id=actor.user_id, actor_role=actor.actor_role
     ) as session:
-        if not patients.display_names(
-            session, tenant_id=tenant_id, patient_ids=[body.patient_id]
+        if not contacts.display_names(
+            session, tenant_id=tenant_id, contact_ids=[body.contact_id]
         ):
-            raise AppointmentRefused(404, PATIENT_NOT_FOUND, "Patient not found")
-        if patients.blocked_patient_ids(
-            session, tenant_id=tenant_id, patient_ids=[body.patient_id]
+            raise AppointmentRefused(404, CONTACT_NOT_FOUND, "Contact not found")
+        if contacts.blocked_contact_ids(
+            session, tenant_id=tenant_id, contact_ids=[body.contact_id]
         ):
-            # Manual §3.2: a blocked patient takes no new booking until the block is resolved.
+            # Manual §3.2: a blocked contact takes no new booking until the block is resolved.
             raise AppointmentRefused(
                 422,
-                PATIENT_BLOCKED,
-                "This patient is blocked. Lift the block on their record before booking.",
+                CONTACT_BLOCKED,
+                "This contact is blocked. Unblock them before booking.",
             )
         practitioner = next(
             (
@@ -722,7 +694,7 @@ def create_appointment(*, actor: Actor, body: AppointmentCreate) -> AppointmentR
         appointment = _insert(
             session,
             tenant_id=tenant_id,
-            patient_id=body.patient_id,
+            contact_id=body.contact_id,
             practitioner=practitioner,
             appointment_type=body.type,
             starts_at=body.starts_at,
@@ -929,36 +901,24 @@ def clinic_today(session: Session) -> date:
     return clinic_day(session).day
 
 
-def _age_on(date_of_birth: date, today: date) -> int:
-    before_birthday = (today.month, today.day) < (
-        date_of_birth.month,
-        date_of_birth.day,
-    )
-    return today.year - date_of_birth.year - (1 if before_birthday else 0)
-
-
 def booking_reference(appointment_id: uuid.UUID) -> str:
-    """The reference the patient is shown (`BK-1A2B3C`): derived from the booking's random id."""
+    """The reference the contact is shown (`BK-1A2B3C`): derived from the booking's random id."""
     return f"BK-{appointment_id.hex[:6].upper()}"
 
 
 def public_book(
     *, tenant_id: uuid.UUID, body: PublicBookingRequest, source_ip: str | None
 ) -> uuid.UUID:
-    """Book from the public page: validate the slot, create or match the patient, book, audit.
+    """Book from the public page: validate the slot, create or match the contact, book, audit.
 
-    One transaction: the patient record, the booking and both audit events commit together or not at
-    all, so a refused booking (`409 SLOT_TAKEN`) leaves no stray patient behind. The answer is the
-    booking's id, whose reference (`booking_reference`) is the same shape whether the patient was new
+    One transaction: the contact record, the booking and both audit events commit together or not at
+    all, so a refused booking (`409 SLOT_TAKEN`) leaves no stray contact behind. The answer is the
+    booking's id, whose reference (`booking_reference`) is the same shape whether the contact was new
     or matched.
     """
     with tenant_transaction(
         tenant_id=tenant_id, actor_role="PUBLIC_BOOKING", source_ip=source_ip
     ) as session:
-        if _age_on(body.date_of_birth, clinic_today(session)) < MINIMUM_BOOKING_AGE:
-            raise AppointmentRefused(
-                422, BOOKING_AGE_NOT_MET, "You need to be 18 or over to book online."
-            )
         practitioners = _bookable_for(
             session, tenant_id=tenant_id, appointment_type=body.type
         )
@@ -980,30 +940,28 @@ def public_book(
                 SLOT_NOT_OFFERED,
                 "That time isn't available. Please choose another.",
             )
-        patient_id, created = patients.match_or_create_patient(
+        contact_id, created = contacts.match_or_create_contact(
             session,
             tenant_id=tenant_id,
             given_name=body.given_name,
             family_name=body.family_name,
-            date_of_birth=body.date_of_birth,
             email=str(body.email),
             phone=body.phone,
             source_ip=source_ip,
-            new_status="CURRENT",
         )
-        if patients.blocked_patient_ids(
-            session, tenant_id=tenant_id, patient_ids=[patient_id]
+        if contacts.blocked_contact_ids(
+            session, tenant_id=tenant_id, contact_ids=[contact_id]
         ):
             # A blocked record takes no online booking either. The wording names no status.
             raise AppointmentRefused(
                 422,
-                PATIENT_BLOCKED,
+                CONTACT_BLOCKED,
                 "We can't book this appointment online. Please call the clinic.",
             )
         appointment = _insert(
             session,
             tenant_id=tenant_id,
-            patient_id=patient_id,
+            contact_id=contact_id,
             practitioner=practitioner,
             appointment_type=body.type,
             starts_at=body.starts_at,

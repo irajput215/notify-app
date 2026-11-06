@@ -1,15 +1,13 @@
 from fastapi import APIRouter
 
-# The whole model registry, so every foreign key a mapped table names resolves at runtime too: the
-# care-relationship upkeep inserts a row whose `clinic_id` references `clinics`, a table no route
-# module imports on its own.
+# The whole model registry, so every foreign key a mapped table names resolves at runtime too.
 import app.db_models  # noqa: F401
 from app.api.routes import health, login, users, utils
 from app.modules.appointments.router import (
-    internal_router as appointments_internal_router,
+    contact_router as appointments_contact_router,
 )
 from app.modules.appointments.router import (
-    patient_router as appointments_patient_router,
+    internal_router as appointments_internal_router,
 )
 from app.modules.appointments.router import (
     practitioners_router,
@@ -20,15 +18,13 @@ from app.modules.appointments.router import (
     settings_router as appointment_settings_router,
 )
 from app.modules.audit.router import router as audit_router
-from app.modules.care_relationships.router import router as care_relationships_router
+from app.modules.contacts.router import router as contacts_router
 from app.modules.identity_tenancy.router import auth_router
 from app.modules.identity_tenancy.router import router as tenants_router
-from app.modules.patients.router import router as patients_router
 from app.modules.practice.router import router as practice_router  # noqa: E402
 from app.modules.users_roles.router import (
     current_user_router,
     invitations_router,
-    onboarding_router,
     permissions_router,
     roles_router,
     signup_router,
@@ -46,7 +42,7 @@ api_router.include_router(signup_router)
 api_router.include_router(invitations_router)
 api_router.include_router(users.router)
 api_router.include_router(utils.router)
-api_router.include_router(patients_router)
+api_router.include_router(contacts_router)
 api_router.include_router(roles_router)
 api_router.include_router(permissions_router)
 # Before `user_roles_router`: `/users/me/permissions` must match before `/users/{user_id}/permissions`
@@ -59,13 +55,10 @@ api_router.include_router(audit_router)
 # booking routes: the tenant is resolved from the slug on the server, never from the client.
 api_router.include_router(practitioners_router)
 api_router.include_router(appointments_router)
-api_router.include_router(appointments_patient_router)
+api_router.include_router(appointments_contact_router)
 api_router.include_router(public_booking_router)
 # Milestone 4: the clinic hours and slot length, and the booking-email job a scheduler calls (D-009).
 api_router.include_router(appointment_settings_router)
 api_router.include_router(appointments_internal_router)
 api_router.include_router(auth_router)
-# T1-34 / D-007: a patient's care team, the interim upkeep of the treating-relationship rule.
-api_router.include_router(care_relationships_router)
-api_router.include_router(onboarding_router)
 api_router.include_router(practice_router)

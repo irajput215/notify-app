@@ -19,19 +19,12 @@ from app.modules.appointments.models import (
     AppointmentSettings,
 )
 from app.modules.audit.models import AuditLogEntry
-from app.modules.care_relationships.models import CareRelationship
-from app.modules.clinics.models import Clinic
+from app.modules.contacts.models import Contact
 from app.modules.identity_tenancy.models import StepUpGrant, Tenant
-from app.modules.patients.models import (
-    Patient,
-    PatientAlert,
-    PatientEmergencyContact,
-)
+from app.modules.locations.models import Location
 from app.modules.practice.models import TenantSettings
 from app.modules.users_roles.models import (
     Permission,
-    PractitionerAgreement,
-    PractitionerIdentifier,
     Role,
     RolePermission,
     SignupRequest,
@@ -50,14 +43,9 @@ __all__ = [
     "AppointmentNotification",
     "AppointmentSettings",
     "AuditLogEntry",
-    "CareRelationship",
-    "Clinic",
-    "Patient",
-    "PatientAlert",
-    "PatientEmergencyContact",
+    "Location",
+    "Contact",
     "Permission",
-    "PractitionerAgreement",
-    "PractitionerIdentifier",
     "Role",
     "RolePermission",
     "SignupRequest",

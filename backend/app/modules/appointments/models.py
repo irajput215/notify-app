@@ -33,7 +33,7 @@ the same transitions first with `409 ILLEGAL_STATE_TRANSITION`; the trigger is t
 `practitioner_id` and `created_by` name accounts in the legacy `user` table, which has no RLS and no
 `(tenant_id, id)` key (T1-03, blocked by D-003). The same choice `tga_approvals.created_by` made: the
 service checks the practitioner is a bookable account **of the session's tenant** before every write.
-The patient link is the tenant-bound composite key, as on every clinical table.
+The contact link is the tenant-bound composite key, as on every clinical table.
 """
 
 import uuid
@@ -46,9 +46,9 @@ from sqlmodel import Field, SQLModel
 
 # R2. The type decides the practitioner role and the length; the server computes `ends_at` from it.
 APPOINTMENT_TYPES: Final[dict[str, tuple[str, int]]] = {
-    "NURSE_TRIAGE": ("NURSE", 15),
-    "INITIAL_CONSULT": ("DOCTOR", 30),
-    "FOLLOW_UP": ("DOCTOR", 15),
+    "SHORT": ("STAFF", 15),
+    "STANDARD": ("STAFF", 30),
+    "EXTENDED": ("STAFF", 60),
 }
 
 APPOINTMENT_STATUSES: Final[tuple[str, ...]] = (
@@ -119,7 +119,7 @@ NOTIFICATION_OUTCOMES: Final[tuple[str, ...]] = (
     "STARTED",
     "NO_EMAIL",
     "SMTP_ERROR",
-    # The patient opted out of communications (manual §3.4): reminders stop, confirmations do not.
+    # The contact opted out of communications (manual §3.4): reminders stop, confirmations do not.
     "OPTED_OUT",
 )
 
@@ -131,7 +131,7 @@ def _utcnow() -> datetime:
 
 
 class Appointment(SQLModel, table=True):
-    """One booking of one patient with one practitioner, half-open `[starts_at, ends_at)`."""
+    """One booking of one contact with one practitioner, half-open `[starts_at, ends_at)`."""
 
     __tablename__ = "appointments"
     __table_args__ = (
@@ -141,11 +141,11 @@ class Appointment(SQLModel, table=True):
         sa.CheckConstraint(_DURATION_SQL, name="duration"),
         sa.CheckConstraint(f"during = {DURING_SQL}", name="during"),
         sa.UniqueConstraint("tenant_id", "id", name="uq_appointments_tenant_id_id"),
-        # A booking can only name a patient of its own tenant.
+        # A booking can only name a contact of its own tenant.
         sa.ForeignKeyConstraint(
-            ["tenant_id", "patient_id"],
-            ["patients.tenant_id", "patients.id"],
-            name="fk_appointments_tenant_patient",
+            ["tenant_id", "contact_id"],
+            ["contacts.tenant_id", "contacts.id"],
+            name="fk_appointments_tenant_contact",
             ondelete="RESTRICT",
         ),
         # R3: the backing index of the partial EXCLUDE constraint the migration creates.
@@ -161,9 +161,9 @@ class Appointment(SQLModel, table=True):
         # The calendar's read path: one tenant, a time window. `tenant_id` leads every index.
         sa.Index("ix_appointments_tenant_starts", "tenant_id", "starts_at"),
         sa.Index(
-            "ix_appointments_tenant_patient_starts",
+            "ix_appointments_tenant_contact_starts",
             "tenant_id",
-            "patient_id",
+            "contact_id",
             "starts_at",
         ),
     )
@@ -176,7 +176,7 @@ class Appointment(SQLModel, table=True):
     tenant_id: uuid.UUID = Field(
         foreign_key="tenants.id", ondelete="RESTRICT", nullable=False
     )
-    patient_id: uuid.UUID = Field(nullable=False)
+    contact_id: uuid.UUID = Field(nullable=False)
     practitioner_id: uuid.UUID = Field(nullable=False)
     type: str
     status: str = Field(default="BOOKED")

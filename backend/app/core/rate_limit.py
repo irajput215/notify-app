@@ -189,29 +189,21 @@ signup_resend_rate_limit = rate_limit(
 signup_verify_rate_limit = rate_limit(
     scope="signup-verify", limit=20, window_seconds=60
 )
-# Patient search (`POST /api/v1/patients/search`). An interim value: the threat model leaves "Rate-limit
-# values for the search and duplicate-candidate routes" open (`docs/features/05-patients/
-# 04-threat-model.md`, T-05.1 and T-05.13). 120/min per session lets the top-bar quick-find search as a
-# clinician types (debounced) while bounding a scripted sweep of the tenant's names, which is the
-# scraping threat the limit exists for.
-patient_search_rate_limit = rate_limit(
-    scope="patient-search", limit=120, window_seconds=60
+# Contact search (`POST /api/v1/contacts/search`). 120/min per session lets a quick-find search as an
+# agent types (debounced) while bounding a scripted sweep of the workspace's contacts.
+contact_search_rate_limit = rate_limit(
+    scope="contact-search", limit=120, window_seconds=60
 )
 # The public booking page (`docs2/sdlc/04-calendar-and-booking/api.md`). Unauthenticated. Reading the
 # free slots is cheap and a page loads it once per visit type: 60/min per address. Booking writes a
-# patient and an appointment: 10/min per address, and 5 an hour per email address (`limit_identifier`),
-# so neither a single source nor a single identity can fill a clinic's calendar.
+# contact and an appointment: 10/min per address, and 5 an hour per email address (`limit_identifier`),
+# so neither a single source nor a single identity can fill a workspace's calendar.
 public_slots_rate_limit = rate_limit(scope="public-slots", limit=60, window_seconds=60)
 public_booking_rate_limit = rate_limit(
     scope="public-booking", limit=10, window_seconds=60
 )
 PUBLIC_BOOKING_EMAIL_LIMIT = 5
 PUBLIC_BOOKING_EMAIL_WINDOW_SECONDS = 3600
-# The clinical write class for prescriptions: `10-prescription-safety-gate/03-design.md` gives dispatch
-# 30/min per session; staging and signing share the budget, so one session cannot flood the queue.
-prescription_write_rate_limit = rate_limit(
-    scope="prescription-write", limit=30, window_seconds=60
-)
 # The scheduler's booking-email job (`POST /api/v1/internal/booking-notifications/run`, D-009):
 # a schedule calls it every 15 minutes; 20/min per address bounds a token-guessing run and a loop.
 internal_job_rate_limit = rate_limit(scope="internal-job", limit=20, window_seconds=60)

@@ -40,7 +40,7 @@ from app.modules.identity_tenancy.models import (
     Tenant,
 )
 from app.modules.identity_tenancy.schemas import (
-    PublicClinicRead,
+    PublicWorkspaceRead,
     StepUpGrantRead,
     TenantProfileRead,
     normalise_display_name,
@@ -229,7 +229,9 @@ def signup_display_name(clinic_name: str, *, slug: str) -> str:
     return collapsed or display_name_from_slug(slug)
 
 
-def public_clinic_for_slug(session: Session, slug: str) -> PublicClinicRead | None:
+def public_workspace_for_slug(
+    session: Session, slug: str
+) -> PublicWorkspaceRead | None:
     """What an unauthenticated visitor may know about the clinic behind a slug: its display name.
 
     The same resolution as `active_tenant_id_for_slug` (only an `ACTIVE` organisation; anything else
@@ -246,7 +248,7 @@ def public_clinic_for_slug(session: Session, slug: str) -> PublicClinicRead | No
         )
         .one_or_none()
     )
-    return None if row is None else PublicClinicRead(display_name=row[0])
+    return None if row is None else PublicWorkspaceRead(display_name=row[0])
 
 
 def slugify(clinic_name: str) -> str:
@@ -344,7 +346,7 @@ def seed_demo_tenant(session: Session) -> Tenant:
 #
 # A PUBLIC presentation setting, not a security setting: it changes what the sidebar, the booking page
 # and the clinic's emails call the clinic, and nothing about who may do what. So it is not R12's
-# step-up-gated `PATCH /tenants/current` (which still refuses every security setting), but its own
+# step-up-gated `PATCH /workspaces/current` (which still refuses every security setting), but its own
 # sub-resource, authorised by `tenant:configure` (Practice Owner only) and audited as
 # `tenant.config_changed` with `changed_fields` and `step_up: false` on the same transaction.
 

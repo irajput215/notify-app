@@ -10,28 +10,28 @@ execute inside the RLS-scoped transaction, audited on the same transaction.
 The public routes have no session, so the order is: rate-limit (per address, and per email for a
 booking) -> resolve the tenant **server-side** from the slug (only an `ACTIVE` organisation; anything
 else is the same `404`) -> validate -> execute under that tenant's RLS context, audited. The slug is
-routing only: it selects which clinic's free slots are read and grants nothing else - no patient, no
+routing only: it selects which clinic's free slots are read and grants nothing else - no contact, no
 appointment and no staff detail beyond a practitioner's display name ever leaves these routes.
 
 ## Endpoint declarations (`docs/reference/definition-of-done.md` §4)
 
 | Method and path | Auth | Permission | Tenant scope | Input | Output | Audit |
 | --- | --- | --- | --- | --- | --- | --- |
-| `GET /practitioners` | yes | `patient:read` | session | none | `PractitionerRead[]` | none (a read of staff names) |
-| `GET /appointments?from=&to=&practitioner_id=` | yes | `patient:read` | session | query | `AppointmentRead[]` | deferred with `patient.read` (T1-34) |
-| `POST /appointments` | yes | `patient:update` | session | `AppointmentCreate` | `AppointmentRead` (201) | `appointment.create` |
-| `POST /appointments/{id}/status` | yes | `patient:update` | both | `AppointmentStatusUpdate` | `AppointmentRead` | `appointment.state_change` |
-| `GET /patients/{id}/appointments` | yes | `patient:read` | both | none | `AppointmentRead[]` | deferred with `patient.read` (T1-34) |
-| `GET /public/{slug}` | **no** | none | slug, server-side | none | `PublicClinicRead` (`display_name` only) | none (PUBLIC data only) |
+| `GET /practitioners` | yes | `contacts:read` | session | none | `PractitionerRead[]` | none (a read of staff names) |
+| `GET /appointments?from=&to=&practitioner_id=` | yes | `contacts:read` | session | query | `AppointmentRead[]` | deferred with `contact.read` (T1-34) |
+| `POST /appointments` | yes | `contacts:manage` | session | `AppointmentCreate` | `AppointmentRead` (201) | `appointment.create` |
+| `POST /appointments/{id}/status` | yes | `contacts:manage` | both | `AppointmentStatusUpdate` | `AppointmentRead` | `appointment.state_change` |
+| `GET /contacts/{id}/appointments` | yes | `contacts:read` | both | none | `AppointmentRead[]` | deferred with `contact.read` (T1-34) |
+| `GET /public/{slug}` | **no** | none | slug, server-side | none | `PublicWorkspaceRead` (`display_name` only) | none (PUBLIC data only) |
 | `GET /public/{slug}/slots?type=` | **no** | none | slug, server-side | query | `PublicSlot[]` | none (no personal data read) |
-| `POST /public/{slug}/bookings` | **no** | none | slug, server-side | `PublicBookingRequest` (JSON only) | `{reference}` (201) | `patient.create` (when new), `appointment.create` |
+| `POST /public/{slug}/bookings` | **no** | none | slug, server-side | `PublicBookingRequest` (JSON only) | `{reference}` (201) | `contact.create` (when new), `appointment.create` |
 | `GET /appointment-settings` | yes | none (PUBLIC hours; any member) | session | none | `AppointmentSettingsRead` | none |
 | `PUT /appointment-settings` | yes | `tenant:configure` | session | `AppointmentSettingsUpdate` | `AppointmentSettingsSaved` | `tenant.config_changed` (and `DENIED` for a refusal) |
 | `POST /internal/booking-notifications/run` | bearer job token (off when unset: `404`) | none | each active tenant, server-side | none | `NotificationRunReport` | `integration.request` per email sent |
 
 A `tenant_id` in a body or a query string is never read: it is ignored and recorded as
 `appointment.create` `DENIED` `CLIENT_TENANT_ID_IGNORED` (INV-1). Errors are RFC 7807 with
-`detail.code`; another tenant's appointment, patient or practitioner is `404`, never `403`.
+`detail.code`; another tenant's appointment, contact or practitioner is `404`, never `403`.
 """
 
 import hashlib
@@ -54,7 +54,6 @@ from pydantic import AwareDatetime
 
 from app.api.deps import ActorDep, SessionDep
 from app.core.config import settings
-from app.core.db import tenant_transaction
 from app.core.rate_limit import (
     PUBLIC_BOOKING_EMAIL_LIMIT,
     PUBLIC_BOOKING_EMAIL_WINDOW_SECONDS,
@@ -81,7 +80,7 @@ from app.modules.appointments.schemas import (
     PublicSlot,
 )
 from app.modules.identity_tenancy import service as identity_tenancy
-from app.modules.identity_tenancy.schemas import PublicClinicRead
+from app.modules.identity_tenancy.schemas import PublicWorkspaceRead
 from app.modules.users_roles.catalog import (
     APPOINTMENT_PERMISSIONS,
     EMAIL_NOT_CONFIGURED,
@@ -92,7 +91,7 @@ from app.modules.users_roles.service import authorize, can
 
 practitioners_router = APIRouter(prefix="/practitioners", tags=["appointments"])
 router = APIRouter(prefix="/appointments", tags=["appointments"])
-patient_router = APIRouter(prefix="/patients", tags=["appointments"])
+contact_router = APIRouter(prefix="/contacts", tags=["appointments"])
 public_router = APIRouter(prefix="/public", tags=["public-booking"])
 settings_router = APIRouter(prefix="/appointment-settings", tags=["appointments"])
 internal_router = APIRouter(prefix="/internal", tags=["internal"])
@@ -166,9 +165,9 @@ def create_appointment(
     request: Request,
     background_tasks: BackgroundTasks,
 ) -> AppointmentRead:
-    """Book a patient with a practitioner. `409 APPOINTMENT_OVERLAP` names the clash's time.
+    """Book a contact with a practitioner. `409 APPOINTMENT_OVERLAP` names the clash's time.
 
-    The patient's confirmation email is sent after the booking commits (when email is configured).
+    The contact's confirmation email is sent after the booking commits (when email is configured).
     """
     authorize(actor, APPOINTMENT_PERMISSIONS["write"])
     if body.client_tenant_id_supplied or "tenant_id" in request.query_params:
@@ -207,53 +206,50 @@ def change_appointment_status(
         _raise(refusal)
 
 
-@patient_router.get(
-    "/{patient_id}/appointments",
+@contact_router.get(
+    "/{contact_id}/appointments",
     response_model=list[AppointmentRead],
     responses=_REFUSALS,
 )
-def list_patient_appointments(
-    *, actor: ActorDep, request: Request, patient_id: uuid.UUID
+def list_contact_appointments(
+    *, actor: ActorDep, request: Request, contact_id: uuid.UUID
 ) -> list[AppointmentRead]:
-    """One patient's bookings, newest first. Another tenant's patient is `404`; one of this
-    organisation's without the care relationship a doctor's or nurse's grant needs is `403`."""
+    """One contact's bookings, newest first. Another workspace's contact is `404`."""
     authorize(
         actor, APPOINTMENT_PERMISSIONS["read"], ResourceRef(tenant_id=actor.tenant_id)
     )
-    result = service.list_for_patient(
-        actor=actor, patient_id=patient_id, source_ip=_client_address(request)
+    result = service.list_for_contact(
+        actor=actor, contact_id=contact_id, source_ip=_client_address(request)
     )
     if not result.found:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": service.PATIENT_NOT_FOUND, "message": "Patient not found"},
+            detail={"code": service.CONTACT_NOT_FOUND, "message": "Contact not found"},
         )
-    if result.decision is not None:
-        enforce(result.decision)
     return result.bookings
 
 
 # -- public ----------------------------------------------------------------------------------------
 
 
-def _clinic(session: SessionDep, clinic_slug: str) -> uuid.UUID:
+def _workspace(session: SessionDep, workspace_slug: str) -> uuid.UUID:
     """The tenant behind a slug, resolved on the server. Unknown, malformed or not active: `404`."""
     tenant_id = (
-        identity_tenancy.active_tenant_id_for_slug(session, clinic_slug)
-        if _SLUG.match(clinic_slug)
+        identity_tenancy.active_tenant_id_for_slug(session, workspace_slug)
+        if _SLUG.match(workspace_slug)
         else None
     )
     if tenant_id is None:
-        raise _clinic_not_found()
+        raise _workspace_not_found()
     return tenant_id
 
 
-def _clinic_not_found() -> HTTPException:
+def _workspace_not_found() -> HTTPException:
     """One answer for an unknown, malformed or inactive clinic, so none is distinguishable."""
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail={
-            "code": "CLINIC_NOT_FOUND",
+            "code": "WORKSPACE_NOT_FOUND",
             "message": "This booking page isn't available.",
         },
     )
@@ -277,40 +273,42 @@ def _json_only(request: Request) -> None:
         )
 
 
-ClinicDep = Annotated[uuid.UUID, Depends(_clinic)]
+WorkspaceDep = Annotated[uuid.UUID, Depends(_workspace)]
 
 
 @public_router.get(
-    "/{clinic_slug}",
-    response_model=PublicClinicRead,
+    "/{workspace_slug}",
+    response_model=PublicWorkspaceRead,
     dependencies=[Depends(public_slots_rate_limit)],
     responses={404: {"description": "No such clinic, or not taking bookings"}},
 )
-def read_public_clinic(*, session: SessionDep, clinic_slug: str) -> PublicClinicRead:
+def read_public_workspace(
+    *, session: SessionDep, workspace_slug: str
+) -> PublicWorkspaceRead:
     """The clinic's public display name, for the booking page's heading. Unauthenticated.
 
     Only the PUBLIC display name: never `legal_name`, the tenant id or the status. Resolved like the
-    other public routes (only an `ACTIVE` clinic; anything else is the same `404 CLINIC_NOT_FOUND`).
+    other public routes (only an `ACTIVE` clinic; anything else is the same `404 WORKSPACE_NOT_FOUND`).
     """
     clinic = (
-        identity_tenancy.public_clinic_for_slug(session, clinic_slug)
-        if _SLUG.match(clinic_slug)
+        identity_tenancy.public_workspace_for_slug(session, workspace_slug)
+        if _SLUG.match(workspace_slug)
         else None
     )
     if clinic is None:
-        raise _clinic_not_found()
+        raise _workspace_not_found()
     return clinic
 
 
 @public_router.get(
-    "/{clinic_slug}/slots",
+    "/{workspace_slug}/slots",
     response_model=list[PublicSlot],
     dependencies=[Depends(public_slots_rate_limit)],
     responses={404: {"description": "No such clinic, or not taking bookings"}},
 )
 def list_public_slots(
     *,
-    tenant_id: ClinicDep,
+    tenant_id: WorkspaceDep,
     appointment_type: Annotated[AppointmentType, Query(alias="type")],
 ) -> list[PublicSlot]:
     """Free slots for one visit type over the next 14 days. Unauthenticated."""
@@ -318,7 +316,7 @@ def list_public_slots(
 
 
 @public_router.post(
-    "/{clinic_slug}/bookings",
+    "/{workspace_slug}/bookings",
     response_model=PublicBookingCreated,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(public_booking_rate_limit), Depends(_json_only)],
@@ -330,12 +328,12 @@ def list_public_slots(
 )
 def create_public_booking(
     *,
-    tenant_id: ClinicDep,
+    tenant_id: WorkspaceDep,
     body: PublicBookingRequest,
     request: Request,
     background_tasks: BackgroundTasks,
 ) -> PublicBookingCreated:
-    """Book from the public page. The same answer whether the patient was new or already known."""
+    """Book from the public page. The same answer whether the contact was new or already known."""
     limit_identifier(
         scope="public-booking-email",
         identifier=str(body.email),

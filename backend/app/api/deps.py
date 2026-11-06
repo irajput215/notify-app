@@ -59,7 +59,6 @@ class SessionAccount:
     may_transact: bool
     permissions: frozenset[str]
     role_codes: frozenset[str]
-    unscoped_permissions: frozenset[str]
 
 
 def get_session_account(token: TokenDep) -> SessionAccount:
@@ -131,7 +130,6 @@ def get_session_account(token: TokenDep) -> SessionAccount:
         may_transact=may_transact,
         permissions=grants.permissions,
         role_codes=grants.role_codes,
-        unscoped_permissions=grants.unscoped_permissions,
     )
 
 
@@ -226,7 +224,6 @@ def get_actor(account: SessionAccountDep) -> Actor:
         is_active=current_user.is_active,
         permissions=account.permissions,
         role_codes=account.role_codes,
-        unscoped_permissions=account.unscoped_permissions,
     )
 
 
