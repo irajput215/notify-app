@@ -124,7 +124,7 @@ def _client_address(request: Request) -> str | None:
 
 @practitioners_router.get("", response_model=list[PractitionerRead])
 def list_practitioners(*, actor: ActorDep) -> list[PractitionerRead]:
-    """Bookable staff: active accounts holding a Doctor, Authorised Prescriber or Nurse role."""
+    """Bookable staff: active accounts holding a bookable role."""
     authorize(actor, APPOINTMENT_PERMISSIONS["read"])
     return service.list_practitioners(tenant_id=actor.tenant_id)
 

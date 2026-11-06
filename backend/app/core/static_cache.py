@@ -5,7 +5,7 @@ stylesheet by a content-hashed file under `assets/`, and those hashed files. So:
 
 - `/assets/*` never changes under its name. It is sent with
   `Cache-Control: public, max-age=31536000, immutable`, and a browser that has it never asks again.
-- An HTML document (`/`, `/index.html`, the SPA fallback for a deep link such as `/patients/<id>`)
+- An HTML document (`/`, `/index.html`, the SPA fallback for a deep link such as `/contacts/<id>`)
   must be revalidated on every load, or a returning browser keeps an `index.html` that names assets
   a newer deploy has replaced. It is sent with `Cache-Control: no-cache` (stored, but always
   revalidated; the static server answers a matching `If-None-Match` with `304`).

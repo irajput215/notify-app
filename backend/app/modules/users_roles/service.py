@@ -1517,17 +1517,16 @@ def accept_invitation(*, token: str, new_password: str) -> InvitationAccepted | 
 
 
 def _display_name(user: User) -> str:
-    """How a colleague is named on a clinical screen: the full name, else the sign-in address."""
+    """How a colleague is named on screen: the full name, else the sign-in address."""
     return user.full_name or user.email
 
 
 def holders_of(*, tenant_id: uuid.UUID, permission: str) -> dict[uuid.UUID, str]:
     """The active accounts of this organisation whose roles grant `permission`, with display names.
 
-    The prescriptions module asks it *"who may sign?"* to offer the reviewing-doctor list and to
-    refuse a draft addressed to someone who cannot sign it. The answer is decided from the permission,
-    never from a role name, so a tenant whose bundles change gets the right list without a code change
-    (`01-requirements.md`: *"a route handler never branches on a role name"*).
+    For a module that needs "who may do X?" (an assignee list, say). The answer is decided from the
+    permission, never from a role name, so a workspace whose bundles change gets the right list
+    without a code change.
 
     The legacy `user` table carries no RLS (T1-03, blocked by D-003), so the explicit `tenant_id`
     predicate is the isolation control for the accounts, as in `list_staff`; the RBAC reads run under

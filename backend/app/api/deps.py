@@ -27,7 +27,7 @@ reusable_oauth2 = OAuth2PasswordBearer(
 # The reason code for "authenticated, but not attached to an organisation". Every refusal in this
 # codebase carries a machine-readable code — the policy layer's `DecisionCode`, the users-and-roles
 # `LAST_ADMINISTRATOR` — and this boundary answer was the one that did not, so a client could not
-# tell "you have no organisation" from "you are not allowed to do this". The patients screen reads
+# tell "you have no organisation" from "you are not allowed to do this". The frontend reads
 # the code to say what to do next rather than guessing from the status.
 NO_ORGANISATION = "NO_ORGANISATION"
 
@@ -203,7 +203,7 @@ def get_actor(account: SessionAccountDep) -> Actor:
 
     The policy layer's own verdict for a missing tenant is `401 NO_IDENTITY`
     (`03-users-and-roles/03-design.md`, "The central policy layer"). `403` is used at this boundary
-    because the caller *is* authenticated; the existing patient routes have always answered `403`
+    because the caller *is* authenticated; the existing routes have always answered `403`
     for "no organisation", and changing that is a contract change outside this slice.
     """
     current_user = account.user

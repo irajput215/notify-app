@@ -69,8 +69,7 @@ class _IgnoresClientTenantId(BaseModel):
 
 
 class PractitionerRead(BaseModel):
-    """A bookable member of staff: an active account holding a Doctor, Authorised Prescriber or
-    Nurse role in the session's organisation."""
+    """A bookable member of staff: an active account holding a bookable role (any system role)."""
 
     id: uuid.UUID
     name: str

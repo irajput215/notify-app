@@ -5,7 +5,7 @@ from datetime import datetime
 
 from sqlmodel import SQLModel
 
-# PRIVATE API, deliberately, and the reason is the same as the patients schemas: SQLModel annotates
+# PRIVATE API, deliberately, and the reason is the same as in the users_roles schemas: SQLModel annotates
 # `model_config` as `SQLModelConfig`, so a plain `ConfigDict` is rejected by both mypy --strict and ty.
 from sqlmodel._compat import SQLModelConfig
 

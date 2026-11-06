@@ -7,19 +7,17 @@ Contract: `docs2/sdlc/04-calendar-and-booking/api.md` (agreed 2026-10-07, owner)
 
 `no_overlapping_appointments` is a *partial* `EXCLUDE USING gist` over
 `(tenant_id WITH =, practitioner_id WITH =, during WITH &&) WHERE status NOT IN ('CANCELLED',
-'NO_SHOW')`, created by the migration. It is the TGA grain technique
-(`app/modules/tga_approvals/models.py`), copied rather than re-invented:
+'NO_SHOW')`, created by the baseline migration:
 
 * `during` is a stored `tstzrange(starts_at, ends_at, '[)')`, **derived** by the
   `trg_appointment_during` trigger on every write and pinned by `ck_appointments_during`, so the
   range the constraint indexes can never describe a time the row's own columns do not. `[)` makes
   back-to-back bookings legal: 09:00-09:15 and 09:15-09:30 do not overlap.
 * Partial, so a cancelled or no-show booking frees its slot without being deleted.
-* `btree_gist` supplies the equality operator classes (already created by `d4f8c2a9b7e1`).
-* The constraint is declared here as an `Index` of the same name, for the reason the TGA model
-  gives: PostgreSQL reports an `EXCLUDE` constraint's backing index to reflection as an index, and a
-  same-named GiST index is the only declaration that keeps `alembic check` and
-  `tests/core/test_schema_conventions.py` both honest.
+* `btree_gist` supplies the equality operator classes (created by the baseline migration).
+* The constraint is declared here as an `Index` of the same name, because PostgreSQL reports an
+  `EXCLUDE` constraint's backing index to reflection as an index, and a same-named GiST index is the
+  only declaration that keeps `alembic check` honest (see the filter in `app/alembic/env.py`).
 
 ## The duration is the type's, and the status machine is R4's, in the database too
 
@@ -31,9 +29,8 @@ the same transitions first with `409 ILLEGAL_STATE_TRANSITION`; the trigger is t
 ## No foreign key to the account table
 
 `practitioner_id` and `created_by` name accounts in the legacy `user` table, which has no RLS and no
-`(tenant_id, id)` key (T1-03, blocked by D-003). The same choice `tga_approvals.created_by` made: the
-service checks the practitioner is a bookable account **of the session's tenant** before every write.
-The contact link is the tenant-bound composite key, as on every clinical table.
+`(tenant_id, id)` key. Instead the service checks the practitioner is a bookable account **of the session's tenant** before every write.
+The contact link is the tenant-bound composite key.
 """
 
 import uuid

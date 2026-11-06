@@ -1,43 +1,39 @@
-# AGENTS.md — standing orders for this repository
+# AGENTS.md: standing orders for this repository
 
 ## What this repository is
 
-ozbrands (ClinicOS): a clinical prescribing platform — TGA approvals, the prescription safety gate,
-e-prescribing and pharmacy dispatch. The backend is FastAPI + SQLModel + PostgreSQL; the frontend is
-React + TanStack, built into the backend image.
+Notify: a WhatsApp business messaging platform for small businesses, with a ready-made workflow for
+Australian health clinics. Two apps in one repository:
 
-**Current state: MVP.** `docs/` describes the *target* contract, not the code. The app is a FastAPI
-template plus the first tenancy slice. Never assume a behaviour exists because a document specifies it —
-check `backend/app/`.
+- `backend/`: FastAPI + SQLModel + PostgreSQL. The platform layer (workspaces with row-level security,
+  roles, hash-chained audit, field encryption, structured logging, the booking engine) came from
+  ClinicOS; the clinical domain was removed. Modules in `backend/app/modules/`.
+- `frontend/`: Next.js (App Router) + Tailwind + shadcn/ui. Its services still serve demo data and move
+  onto the API (`frontend/lib/api/client.ts`) module by module.
 
-Read [docs/README.md](docs/README.md) first. That file fixes the rest.
+`docs/` is ClinicOS's platform contract, kept for the layer Notify inherited; check `backend/app/` for
+what actually exists.
 
 ## Commands
 
 ```bash
 # Backend (run from backend/)
 uv sync                                   # install
-uv run fastapi dev app/main.py            # dev server
-uv run pytest                             # tests
-uv run pytest tests/path::test_name       # one test
+uv run alembic upgrade head               # migrate (needs a database: docker compose up -d db)
+uv run fastapi dev app/main.py            # dev server on :8000
+uv run pytest -q                          # the lean suite, a few seconds
 uv run ruff check . && uv run ruff format .
 uv run mypy app                           # strict
 uv run alembic revision --autogenerate -m "message"
-uv run alembic upgrade head
+uv run alembic check                      # must report no operations
 
-# Frontend: frontend/, the only app (run from the repo root; workspace scripts)
-bun install && bun run dev                # :5174, proxies /api to the backend on :8000
-bun run lint && bun run typecheck         # biome, tsc
-bun run build                             # writes backend/app/frontend, served by the backend at /
-bun run test                              # playwright; PLAYWRIGHT_BASE_URL=http://127.0.0.1:8000 for the served build
-bash scripts/generate-client.sh           # regenerate the SDK from the backend OpenAPI
-
-# Whole stack
-docker compose up -d
+# Frontend (run from frontend/)
+npm install && npm run dev                # :3000
+npm run lint && npm run build
+bash ../scripts/generate-client.sh        # regenerate lib/api/schema.d.ts from the backend
 ```
 
-`.env` is **not** committed. Run `cp .env.example .env` before anything that reads settings — CI does
-exactly this. Rotate the placeholder values before deploying.
+`.env` is **not** committed. Run `cp .env.example .env` before anything that reads settings.
 
 ## Non-negotiables
 
@@ -50,8 +46,8 @@ These hold everywhere and are never traded for schedule:
   decides.
 - **Tenant identity is resolved, never supplied** (INV-1). A `tenant_id` from a body, header or query
   parameter is ignored and audited as a cross-tenant attempt.
-- **No PHI in logs, metrics, traces or error responses** (INV-5). Never log a clinical request body, at
-  any level, including in errors.
+- **No personal data in logs, metrics, traces or error responses** (INV-5). Never log a message body,
+  a phone number, an email address or a connector credential, at any level, including in errors.
 - **Audit in the same transaction as the change**, append-only, and a failed audit write fails the
   operation (INV-4).
 - **Fail closed.** A missing tenant setting matches nothing, never everything.
@@ -64,20 +60,19 @@ These hold everywhere and are never traded for schedule:
   change; run `ruff`, `mypy` and `pytest` before committing.
 - **Ask first:** any schema change; any new dependency; any change to RLS, the tenant-setting helper or
   the permission matrix; any change to CI pipeline order; any new third-party data flow.
-- **Never:** accept `tenant_id` from the client; commit `.env`; edit `clinic-os-secure-by-design/` (an
-  external read-only input); ship a feature with an open High or Critical finding.
+- **Never:** accept `tenant_id` from the client; commit `.env`; ship a feature with an open High or Critical finding.
 
 ## Where things live
 
 | Path | Owns |
 |---|---|
-| [`docs/features/`](docs/features/README.md) | The build unit: 17 folders × 7 documents. Normative for requirements, invariants and audit events |
-| [`docs/tasks/`](docs/tasks/) | The ordered work breakdown, one file per delivery phase |
-| [`docs/reference/`](docs/reference/) | Build contract, gates, Definition of Done, control matrix, open questions, decision records |
+| `backend/app/modules/` | Domain modules: `identity_tenancy`, `users_roles`, `contacts`, `locations`, `practice`, `appointments`, `audit` |
+| `backend/app/core/` | Tenant transactions, field encryption, logging and redaction, rate limits, security headers |
+| `backend/app/alembic/versions/` | `0001_notify_baseline` and what follows it |
+| `frontend/` | The Next.js app |
+| [`docs/features/`](docs/features/README.md) | Platform feature contracts inherited from ClinicOS |
+| [`docs/reference/`](docs/reference/) | Build contract, gates, Definition of Done, database conventions, decisions |
 | [`.agents/skills/`](.agents/skills/) | Reusable workflows. Load the matching skill before doing the work it covers |
-
-A conflict between layers is a defect to raise, not a judgement call: the feature document is normative
-for requirements, the reference layer for gates and Definition of Done.
 
 ## Conventions that differ from the upstream template
 
@@ -96,3 +91,9 @@ for requirements, the reference layer for gates and Definition of Done.
 - **Tenant transactions.** Use `app.core.db.tenant_transaction(...)` for any query against tenant data.
   It sets `app.tenant_id` with `SET LOCAL` inside the transaction and refuses to open without a tenant.
   Never use a session-level `SET`.
+- **Workspace, internally tenant.** The API and the UI say *workspace*; the database and the code say
+  `tenant` (`tenants`, `tenant_id`, `app.tenant_id`). Say *contact*, *agent* and *location*, never
+  *patient*, *prescriber* or *clinic*, outside a clinic-specific feature.
+- **Every new tenant table gets forced RLS in its migration**, with the two policies the baseline's
+  `_standard_policies` creates, and explicit grants to `notify_app` (no `DELETE` unless the app really
+  deletes). The app connects as `notify_app`; migrations run as the owner (`MIGRATION_DATABASE_URL`).

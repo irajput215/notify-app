@@ -1,99 +1,57 @@
+# Local development: PostgreSQL, Mailpit (catches every email at http://localhost:8025) and the API.
+# The frontend runs on the host with `npm run dev` (see HOW_TO_RUN.md).
 services:
-
-  proxy:
-    image: traefik:v3.7
-    volumes:
-      # Add Docker as a mounted volume, so that Traefik can read the labels of other services
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    command:
-      # Enable Docker in Traefik, so that it reads labels from Docker services
-      - --providers.docker
-      # Do not expose all Docker services, only the ones explicitly exposed
-      - --providers.docker.exposedbydefault=false
-      # Create an entrypoint "http" listening on port 80
-      - --entrypoints.http.address=:80
-      # Enable the access log, with HTTP requests
-      - --accesslog
-      # Enable the Traefik log, for configurations and errors
-      - --log
-
   db:
     image: postgres:18
+    ports:
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
-      interval: 10s
-      retries: 5
-      start_period: 30s
-      timeout: 10s
+      interval: 5s
+      retries: 10
+      timeout: 5s
     volumes:
       - app-db-data:/var/lib/postgresql
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Variable not set}
       - POSTGRES_DB=app
 
-  adminer:
-    image: adminer
-    depends_on:
-      - db
-    environment:
-      - ADMINER_DESIGN=pepa-linha-dark
-    labels:
-      # Enable Traefik for this service
-      - traefik.enable=true
-      # Route HTTP traffic for the Adminer subdomain
-      - traefik.http.routers.adminer-http.rule=Host(`adminer.${DOMAIN:-localhost}`)
-      - traefik.http.routers.adminer-http.entrypoints=http
-      # Define the port inside of the Docker service to use
-      - traefik.http.services.adminer.loadbalancer.server.port=8080
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "8025:8025"
+      - "1025:1025"
 
   backend:
-    image: backend:latest
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     depends_on:
       db:
         condition: service_healthy
-        restart: true
+    ports:
+      - "8000:8000"
+    command: ["bash", "-c", "bash scripts/prestart.sh && fastapi run --reload"]
     environment:
       PROJECT_NAME: ${PROJECT_NAME:?Variable not set}
       SECRET_KEY: ${SECRET_KEY:?Variable not set}
       FIRST_SUPERUSER: ${FIRST_SUPERUSER:?Variable not set}
       FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:?Variable not set}
-      SMTP_HOST: ${SMTP_HOST}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL}
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?Variable not set}@db:5432/app
-      # Optional, and empty by default: unset means Alembic falls back to DATABASE_URL. Set it to
-      # run migrations as a schema-owning role while the application stays least privilege.
       MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:-}
-      SENTRY_DSN: ${SENTRY_DSN:-}
-      # Forwarded explicitly: this list is the container's whole environment, so a
-      # variable set only in .env would be interpolated for Compose and never reach
-      # the application. Each defaults to the safe value.
-      # The public URL that serves the app: the CORS origin and the base of every emailed link.
-      FRONTEND_HOST: ${FRONTEND_HOST:-http://localhost:8000}
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_TLS: "false"
+      EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL:-info@example.com}
+      FRONTEND_HOST: ${FRONTEND_HOST:-http://localhost:3000}
       SEED_DEMO_TENANT: ${SEED_DEMO_TENANT:-false}
-      USERS_OPEN_REGISTRATION: ${USERS_OPEN_REGISTRATION:-false}
+      USERS_OPEN_REGISTRATION: ${USERS_OPEN_REGISTRATION:-true}
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
-
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/utils/health-check/"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    labels:
-      # Enable Traefik for this service
-      - traefik.enable=true
-
-      # Define the port inside of the Docker service to use
-      - traefik.http.services.backend.loadbalancer.server.port=8000
-
-      # Route HTTP traffic for this domain
-      - traefik.http.routers.backend-http.rule=Host(`${DOMAIN:-localhost}`)
-      - traefik.http.routers.backend-http.entrypoints=http
+    develop:
+      watch:
+        - path: ./backend/app
+          action: sync
+          target: /app/backend/app
 
 volumes:
   app-db-data:

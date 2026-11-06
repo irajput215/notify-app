@@ -40,12 +40,12 @@ CORRELATION_ID_HEADER = "X-Correlation-ID"
 MAX_HANDLE_LENGTH = 128
 _HANDLE_CHARSET = re.compile(rf"^[A-Za-z0-9._:-]{{1,{MAX_HANDLE_LENGTH}}}$")
 
-# A health identifier is a plausible-looking handle by shape alone: ten digits is a Medicare
-# number and sixteen is an IHI (`05-data-and-audit.md`). Refusing them here means a caller cannot
-# make the correlation path a route for health information into the log sink.
+# A phone number or a health identifier is a plausible-looking handle by shape alone (ten digits,
+# sixteen digits). Refusing them here means a caller cannot make the correlation path a route for
+# personal information into the log sink.
 _HEALTH_IDENTIFIER_SHAPED = re.compile(r"^(?:\d{10}|\d{16})$")
 
-#: The route is the *template* (`/api/v1/patients/{patient_id}`), never the resolved path and
+#: The route is the *template* (`/api/v1/contacts/{contact_id}`), never the resolved path and
 #: never a path parameter (`01-requirements.md` R1). A request that matched no route gets this
 #: constant instead of its own path, because the path of an unmatched request is attacker input.
 UNMATCHED_ROUTE = "<unmatched>"
@@ -91,9 +91,9 @@ def route_template(scope: Scope) -> str:
 
     FastAPI's `APIRoute.matches` returns the matched route in its child scope and Starlette's
     router merges that child scope into the request scope, so `scope["route"]` is set by the time
-    the call returns. Its `.path` is the template — `{patient_id}`, never the resolved value. In
+    the call returns. Its `.path` is the template — `{contact_id}`, never the resolved value. In
     this FastAPI version an included router is mounted as one route, so the template is
-    router-relative (`/patients/{patient_id}`) and the `/api/v1` prefix lives on the mount; the
+    router-relative (`/contacts/{contact_id}`) and the `/api/v1` prefix lives on the mount; the
     template is still stable and still free of any caller-supplied value, which is what the
     contract requires.
     """

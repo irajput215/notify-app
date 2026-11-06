@@ -9,26 +9,24 @@ classification: RESTRICTED
 
 # Feature set
 
+> **Notify note (2026-11-06).** These are ClinicOS's platform feature documents, kept for the
+> platform layer Notify inherited (tenancy, authentication, users and roles, audit, integration
+> boundaries, admin, observability). Clinical features 05-12 and 14 were removed with their code. Read
+> "clinic" as *workspace*, "patient" as *contact*, and the seven clinical roles as Owner, Admin and
+> Agent (`backend/app/modules/users_roles/catalog.py` is the source of truth). Notify's own features
+> (channels, conversations, templates, workflows, AI, Cliniko) get new folders here as they are built.
+
 Every feature is a self-contained folder of **seven short documents**, in build order. Numbering is the
 dependency order: a feature may depend on any lower number, never on a higher one.
 
 | # | Feature | Owns | Gates | Depends on |
 |:---:|---|---|:---:|---|
 | 00 | [foundations](00-foundations/01-requirements.md) | repo layout, Docker, environments, CI security pipeline | 1 | — |
-| 01 | [tenancy-and-clinics](01-tenancy-and-clinics/01-requirements.md) | `tenants`, `clinics`, tenant settings | 1, 2 | 00 |
+| 01 | [tenancy-and-clinics](01-tenancy-and-clinics/01-requirements.md) | `tenants` (workspaces), `locations`, workspace settings | 1, 2 | 00 |
 | 02 | [authentication](02-authentication/01-requirements.md) | identity, sessions, MFA, step-up | 3 | 00, 01 |
 | 03 | [users-and-roles](03-users-and-roles/01-requirements.md) | users, roles, permissions, break-glass | 3 | 02 |
 | 04 | [audit-log](04-audit-log/01-requirements.md) | append-only `audit_log`, envelope, immutable export | 2 | 01 |
-| 05 | [patients](05-patients/01-requirements.md) | patients, identifiers, consent, duplicate detection | 2, 4 | 01, 03 |
-| 06 | [clinical-records](06-clinical-records/01-requirements.md) | versioned immutable notes and addenda | 2, 4 | 05 |
-| 07 | [documents](07-documents/01-requirements.md) | upload, scan state, presigned URLs | 2, 4 | 05 |
-| 08 | [tga-approvals](08-tga-approvals/01-requirements.md) | approval register at the grain | 4, 5 | 05 |
-| 09 | [tga-inbox](09-tga-inbox/01-requirements.md) | email ingestion, extraction, human verification | 5 | 08 |
-| 10 | [prescription-safety-gate](10-prescription-safety-gate/01-requirements.md) | **INV-2** — the dispatch gate | 4 | 08 |
-| 11 | [prescribing](11-prescribing/01-requirements.md) | prescription workflow, signing, dispatch queue | 4, 5 | 10 |
-| 12 | [pharmacy-dispatch](12-pharmacy-dispatch/01-requirements.md) | dispatch receipt, webhooks, confirmation | 5 | 11 |
-| 13 | [integration-boundaries](13-integration-boundaries/01-requirements.md) | Parchment, TGA, provider contracts, SSRF | 5 | 11 |
-| 14 | [reports-and-exports](14-reports-and-exports/01-requirements.md) | periodic reporting, DSAR, bulk export | 4 | 04, 08 |
+| 13 | [integration-boundaries](13-integration-boundaries/01-requirements.md) | provider contracts, SSRF, outbound calls (Meta, Cliniko) | 5 | 03 |
 | 15 | [admin-and-config](15-admin-and-config/01-requirements.md) | feature flags, retention jobs, break-glass | 4 | 03 |
 | 16 | [operations-and-observability](16-operations-and-observability/01-requirements.md) | logs, metrics, alerts, incident readiness | 6 | all |
 

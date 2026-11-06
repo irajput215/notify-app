@@ -19,7 +19,7 @@ Requirement `INV-5` (`docs/reference/build-contract.md` §5) and feature
 
 Two honest limits are recorded here rather than hidden:
 
-- Redaction by pattern cannot recognise a patient *name* embedded in free text, because a name
+- Redaction by pattern cannot recognise a person's *name* embedded in free text, because a name
   has no shape. Names are caught when they arrive as a typed field (`given_name`, `patient_name`,
   …), which is why the contract requires typed fields and forbids free-text concatenation; a
   call site that interpolates a name into the message defeats the filter. The typed-field rule is
@@ -201,7 +201,7 @@ def pseudonymise(value: UUID | str, *, prefix: str) -> str:
 # --- Redaction ---------------------------------------------------------------------------------
 
 #: A field whose *name* contains any of these tokens is redacted whatever it holds. Tokens are
-#: matched against the `_`/`-`/`.`-separated parts of a key, so `patient_email` is caught and
+#: matched against the `_`/`-`/`.`-separated parts of a key, so `contact_email` is caught and
 #: `email_template` is caught too — over-redaction is the safe direction.
 _SENSITIVE_KEY_TOKENS: Final[frozenset[str]] = frozenset(
     {
@@ -279,8 +279,6 @@ _SENSITIVE_KEY_TOKENS: Final[frozenset[str]] = frozenset(
         "notes",
         "document",
         "ocr",
-        "prescription",
-        "tga",
         "approval",
         "clinical",
         "diagnosis",

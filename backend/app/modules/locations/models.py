@@ -18,7 +18,7 @@ def _utcnow() -> datetime:
 
 
 # A shared TypeEngine instance: types are immutable, and `sa_type` wants an instance or a class,
-# not a factory (the `patients` model uses the same spelling).
+# not a factory.
 _TIMESTAMPTZ = sa.DateTime(timezone=True)
 
 

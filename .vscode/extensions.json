@@ -2,12 +2,9 @@
     "recommendations": [
         "FastAPILabs.fastapi-vscode",
         "astral-sh.ty",
-        "biomejs.biome",
         "bradlc.vscode-tailwindcss",
         "charliermarsh.ruff",
-        "docker.docker",
-        "github.vscode-github-actions",
-        "ms-playwright.playwright",
+        "dbaeumer.vscode-eslint",
         "ms-python.python",
         "tombi-toml.tombi"
     ]

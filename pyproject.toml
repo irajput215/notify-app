@@ -5,10 +5,6 @@ dev = [
     "zizmor>=1.30.1",
 ]
 
-github-actions = [
-    "smokeshow >=0.5.0",
-]
-
 [tool.uv.workspace]
 members = ["backend"]
 
@@ -16,10 +12,11 @@ members = ["backend"]
 extend-exclude = [
     "img/",
     "uv.lock",
-    "bun.lock",
     "backend/coverage/",
     "backend/htmlcov/",
-    "backend/app/frontend/",
+    "frontend/lib/api/schema.d.ts",
+    "frontend/openapi.json",
+    "frontend/package-lock.json",
 ]
 
 [tool.typos.default]

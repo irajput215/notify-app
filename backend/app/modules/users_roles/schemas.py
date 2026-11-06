@@ -14,7 +14,7 @@ not needed is exposed. `user_roles.granted_by` is SENSITIVE and is deliberately 
 an administrator needs the role and when it was granted, not the granter's identifier. `id` on a
 permission is internal join-key material and is not exposed; `code` is the catalogue's stable identity.
 
-`SQLModelConfig` is imported from `sqlmodel._compat` for the same reason the patients schemas do it:
+`SQLModelConfig` is imported from `sqlmodel._compat` for the reason given in the module docstring:
 SQLModel annotates `model_config` as its own type, so a plain `ConfigDict` is rejected by both
 `mypy --strict` and `ty`.
 """
